@@ -1,0 +1,173 @@
+# Squish on Kubernetes.
+#
+# The service is stateless -- a job lives entirely inside one request, in a
+# scratch dir on an emptyDir -- so scaling is just replicas. Two consequences
+# worth stating plainly:
+#
+#   1. No session affinity is needed, but a request may run for minutes, so
+#      terminationGracePeriodSeconds and the ingress read timeout must both
+#      exceed JOB_TIMEOUT or in-flight conversions get cut off on rollout.
+#   2. Because /tmp is an emptyDir with a size limit, a pod cannot be starved
+#      by another tenant's giant upload -- it just gets evicted.
+#
+#   kubectl apply -f k8s/squish.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: squish
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: squish-config
+  namespace: squish
+data:
+  MAX_UPLOAD_MB: "200"
+  # Whole-body cap. Must match the ingress proxy-body-size annotation below,
+  # and peak scratch use is about 2x this, so it must fit the emptyDir
+  # sizeLimit. Never move one of the three alone.
+  MAX_TOTAL_UPLOAD_MB: "400"
+  MAX_FILES: "40"
+  MAX_CONCURRENCY: "4"
+  JOB_TIMEOUT: "900"
+  SCRATCH_DIR: "/tmp"
+---
+# Optional. Create with:
+#   kubectl -n squish create secret generic squish-secrets --from-literal=API_KEY=...
+# then uncomment the envFrom entry below.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: squish-secrets
+  namespace: squish
+type: Opaque
+stringData:
+  API_KEY: ""
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: squish
+  namespace: squish
+  labels: {app: squish}
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels: {app: squish}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: {maxSurge: 1, maxUnavailable: 0}
+  template:
+    metadata:
+      labels: {app: squish}
+    spec:
+      # Must exceed JOB_TIMEOUT so a rollout never kills a running conversion.
+      terminationGracePeriodSeconds: 960
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: squish
+          image: ghcr.io/YOURORG/squish:1.0.0   # <-- build and push, then set
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: http, containerPort: 8000}
+          envFrom:
+            - configMapRef: {name: squish-config}
+            # - secretRef: {name: squish-secrets}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: scratch, mountPath: /tmp}
+          resources:
+            # LibreOffice and tesseract are the memory drivers. 2Gi is a
+            # working ceiling for MAX_CONCURRENCY=4 on typical office files;
+            # raise both together, never one alone.
+            requests: {cpu: "500m", memory: "1Gi"}
+            limits:   {cpu: "2",    memory: "2Gi"}
+          startupProbe:
+            # Generous: the first LibreOffice run builds a user profile.
+            httpGet: {path: /api/health, port: http}
+            failureThreshold: 30
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: {path: /api/health, port: http}
+            periodSeconds: 20
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet: {path: /api/health, port: http}
+            periodSeconds: 10
+            timeoutSeconds: 3
+      volumes:
+        - name: scratch
+          emptyDir: {sizeLimit: 4Gi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: squish
+  namespace: squish
+spec:
+  selector: {app: squish}
+  ports:
+    - {name: http, port: 80, targetPort: http}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: squish
+  namespace: squish
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: squish}
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource: {name: cpu, target: {type: Utilization, averageUtilization: 70}}
+  behavior:
+    scaleDown:
+      # Slow scale-down: a pod may be mid-conversion.
+      stabilizationWindowSeconds: 300
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: squish
+  namespace: squish
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: squish}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: squish
+  namespace: squish
+  annotations:
+    # These four matter. Defaults are 1 MB body and 60 s reads, which silently
+    # break every large upload and every OCR job.
+    # Must equal MAX_TOTAL_UPLOAD_MB in the ConfigMap. Lower and nginx rejects
+    # a batch the app would have accepted, with an error the app never logs.
+    nginx.ingress.kubernetes.io/proxy-body-size: "400m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "960"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "960"
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: squish.example.com     # <-- your host
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: squish
+                port: {name: http}

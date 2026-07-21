@@ -1,0 +1,32 @@
+# Virtualenvs -- run-local.sh recreates this. 274 MB of platform-specific
+# binaries that will not run on anyone else's machine.
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Runtime output
+squish.log
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# Local overrides
+.env
+docker-compose.override.yml

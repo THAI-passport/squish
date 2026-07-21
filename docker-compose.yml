@@ -1,0 +1,30 @@
+services:
+  squish:
+    build:
+      context: .
+      args:
+        WITH_OFFICE: "1"   # set 0 to drop LibreOffice (~900 MB smaller)
+        WITH_OCR: "1"      # set 0 to drop tesseract/ocrmypdf
+    image: squish:local
+    ports:
+      - "8000:8000"
+    environment:
+      MAX_UPLOAD_MB: "200"
+      # Whole-body cap. Peak scratch use is about 2x this (spool + copy), so it
+      # must stay well under the tmpfs size below.
+      MAX_TOTAL_UPLOAD_MB: "400"
+      MAX_FILES: "40"
+      MAX_CONCURRENCY: "4"
+      JOB_TIMEOUT: "900"
+      # API_KEY: "change-me"   # require X-API-Key / ?key= on /api
+    tmpfs:
+      # Scratch space lives in RAM and vanishes with the container. Cap it so a
+      # runaway conversion cannot eat the host's memory.
+      - /tmp:size=2g,mode=1777
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

@@ -1,0 +1,112 @@
+name: ci
+
+on:
+  push: {branches: [main]}
+  pull_request:
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+
+      # Install the real engines so the gs/qpdf/soffice-marked tests actually
+      # run. Without these they silently skip, and a green board would mean
+      # nothing for the half of the suite that matters most.
+      - name: Install engines
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ghostscript qpdf ocrmypdf tesseract-ocr \
+            libreoffice-writer libreoffice-calc libreoffice-impress
+
+      - run: pip install -r backend/requirements-dev.txt
+      - run: pytest -v
+
+      # Fail the build if any test was skipped for a MISSING ENGINE, which
+      # would mean the step above regressed.
+      - name: Assert no engine was skipped
+        run: |
+          pytest -q -rs 2>&1 | tee /tmp/out
+          if grep -q "not installed" /tmp/out; then
+            echo "::error::an engine is missing in CI; those tests did not run"
+            grep "not installed" /tmp/out
+            exit 1
+          fi
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions: {contents: read, packages: write, id-token: write}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=sha,format=short
+
+      # arm64 matters: on Apple Silicon an amd64-only image runs under
+      # emulation and LibreOffice conversions become painfully slow.
+      - uses: docker/build-push-action@v6
+        id: push
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: true
+          sbom: true
+
+  scan:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions: {contents: read, security-events: write}
+    steps:
+      - uses: actions/checkout@v4
+      # LibreOffice and Ghostscript drag in a large dependency tree with a
+      # steady CVE flow, so this is the check most likely to actually fire.
+      - uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: ${{ env.IMAGE }}:sha-${{ github.sha }}
+          format: sarif
+          output: trivy.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+      - uses: github/codeql-action/upload-sarif@v3
+        with: {sarif_file: trivy.sarif}
+
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Kubernetes manifests
+        run: |
+          curl -sL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
+            | tar xz kubeconform
+          ./kubeconform -strict -summary k8s/
+      - name: Shellcheck
+        run: sudo apt-get install -y shellcheck && shellcheck run-local.sh
