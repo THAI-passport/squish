@@ -388,6 +388,8 @@ GS_LEVELS = {"extreme": "/screen", "recommended": "/ebook", "low": "/printer"}
 
 
 def compress(work: Path, inputs: list[Path], p: dict) -> Result:
+    if not inputs[0].stat().st_size:
+        raise ToolError(f"cannot read {inputs[0].name}: file is empty")
     level = GS_LEVELS.get(p.get("level", "recommended"), "/ebook")
     base = stem(inputs[0])
     dest = work / f"{base}_compressed.pdf"
@@ -1076,6 +1078,8 @@ def header_footer(work: Path, inputs: list[Path], p: dict) -> Result:
 
 def grayscale(work: Path, inputs: list[Path], p: dict) -> Result:
     """Convert to grayscale via Ghostscript. Often a large size win too."""
+    if not inputs[0].stat().st_size:
+        raise ToolError(f"cannot read {inputs[0].name}: file is empty")
     base = stem(inputs[0])
     dest = work / f"{base}_gray.pdf"
     run([
