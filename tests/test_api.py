@@ -101,6 +101,8 @@ def test_oversized_upload_is_rejected_midstream(client, monkeypatch):
 def test_split_returns_a_pdf_with_a_filename(client, pdf):
     r = client.post("/api/t/split", data={"pages": "1"},
                     files={"files": ("sample.pdf", pdf.read_bytes(), "application/pdf")})
+    if r.status_code != 200:
+        print(r.text)
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/pdf"
     assert "attachment" in r.headers["content-disposition"]
@@ -223,11 +225,12 @@ def test_timeout_keeps_the_concurrency_slot_until_the_thread_ends(client, pdf,
 
     monkeypatch.setattr(A.T.REGISTRY["split"], "fn", slow)
     monkeypatch.setattr(A, "JOB_TIMEOUT", 1)
-    r = client.post("/api/t/split",
-                    files={"files": ("s.pdf", pdf.read_bytes(), "application/pdf")})
-    assert r.status_code == 504
-    # Still held: the orphan thread has not finished yet.
-    assert A.sem._value < A.MAX_CONCURRENCY
+    with client:
+        r = client.post("/api/t/split",
+                        files={"files": ("s.pdf", pdf.read_bytes(), "application/pdf")})
+        assert r.status_code == 504
+        # Still held: the orphan thread has not finished yet.
+        assert A.sem._value < A.MAX_CONCURRENCY
     release.set()
 
 
