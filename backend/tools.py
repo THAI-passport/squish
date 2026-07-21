@@ -219,6 +219,11 @@ def parse_pages(spec: str, total: int) -> list[int]:
             continue
         m = re.fullmatch(r"(\d+)?\s*-\s*(\d+)?", chunk)
         if m:
+            # A dash with a number on at least one side is a real range. A bare
+            # "-" carries no bound and is almost always a typo, not "everything";
+            # rejecting it beats silently selecting the whole document.
+            if not m.group(1) and not m.group(2):
+                raise ToolError(f"bad page range: {chunk!r}")
             start = int(m.group(1)) if m.group(1) else 1
             end = int(m.group(2)) if m.group(2) else total
         elif chunk.isdigit():
@@ -676,7 +681,7 @@ def watermark(work: Path, inputs: list[Path], p: dict) -> Result:
     size = max(6, min(200, int(p.get("size", 42))))
     opacity = max(0.05, min(1.0, float(p.get("opacity", 0.25))))
     angle = int(p.get("angle", 45))
-    color = _hex_rgb(p.get("color", "#7c5cff"))
+    color = _hex_rgb(p.get("color") or "#7c5cff")
     fx, fy = POSITIONS.get(p.get("position", "center"), (0.5, 0.5))
     mode = p.get("mode", "single")  # single | tile
 
@@ -716,7 +721,7 @@ def page_numbers(work: Path, inputs: list[Path], p: dict) -> Result:
     if "{n}" not in fmt:
         raise ToolError("format must contain {n}")
     fx, fy = POSITIONS.get(p.get("position", "bottom"), (0.5, 0.94))
-    color = _hex_rgb(p.get("color", "#000000"))
+    color = _hex_rgb(p.get("color") or "#000000")
     pages = parse_pages(p.get("pages", ""), src.page_count)
     # {total} is the document's page count, not the count of pages being
     # stamped -- numbering pages 1-3 of a 10-page file must not say "of 3".
@@ -820,7 +825,7 @@ def redact(work: Path, inputs: list[Path], p: dict) -> Result:
     if not terms:
         raise ToolError("supply at least one term to redact, one per line")
     src = open_pdf(inputs[0], p.get("password", ""))
-    fill = _hex_rgb(p.get("color", "#000000"))
+    fill = _hex_rgb(p.get("color") or "#000000")
     hits = 0
     for pno in parse_pages(p.get("pages", ""), src.page_count):
         page = src[pno]
@@ -915,7 +920,13 @@ def extract_attachments(work: Path, inputs: list[Path], p: dict) -> Result:
 
 
 def safe_component(name: str) -> str:
-    return re.sub(r"[^\w.\- ]+", "_", os.path.basename(name))[:100] or "file"
+    # os.path.basename does NOT split on backslashes on Linux, so a Windows
+    # path (`..\..\system32`) would arrive whole and its `..` survive. Normalise
+    # both separators first, then drop leading dots so no `..` can remain.
+    name = str(name).replace("\\", "/")
+    name = os.path.basename(name)
+    name = re.sub(r"[^\w.\- ]+", "_", name).lstrip(".")
+    return name[:100] or "file"
 
 
 # ------------------------------------------------------------ metadata ---
@@ -1041,7 +1052,7 @@ def header_footer(work: Path, inputs: list[Path], p: dict) -> Result:
     if not template:
         raise ToolError("text is required")
     size = max(6, min(72, int(p.get("size", 10))))
-    color = _hex_rgb(p.get("color", "#555555"))
+    color = _hex_rgb(p.get("color") or "#555555")
     fx, fy = POSITIONS.get(p.get("position", "top"), (0.5, 0.08))
     pages = parse_pages(p.get("pages", ""), src.page_count)
     today = datetime.date.today().isoformat()
@@ -1103,7 +1114,12 @@ def rasterise(work: Path, inputs: list[Path], p: dict) -> Result:
 
 
 def _hex_rgb(value: str) -> tuple[float, float, float]:
-    v = str(value or "#000000").lstrip("#")
+    # Strict: an empty or None colour is a caller bug, not black. Callers that
+    # want a default pass it explicitly (`p.get("color") or "#000000"`), so a
+    # blank field falls back there while a truly missing value is caught here.
+    if value is None or str(value).strip() == "":
+        raise ToolError("colour is required")
+    v = str(value).strip().lstrip("#")
     if len(v) == 3:
         v = "".join(c * 2 for c in v)
     if len(v) != 6 or not re.fullmatch(r"[0-9a-fA-F]{6}", v):

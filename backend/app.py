@@ -25,9 +25,14 @@ import time
 import unicodedata
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+# Import UploadFile from Starlette, NOT FastAPI. request.form() yields
+# starlette.datastructures.UploadFile; fastapi.UploadFile is a *subclass*, so
+# `isinstance(form_file, fastapi.UploadFile)` is False and every upload gets
+# filtered out as "no files uploaded". The base class matches both.
+from starlette.datastructures import UploadFile
 from starlette.background import BackgroundTask
 
 try:
@@ -219,20 +224,37 @@ def discard(work: Path) -> None:
     shutil.rmtree(work, ignore_errors=True)
 
 
-async def parse_form(request: Request):
-    """Parse multipart with per-part and part-count ceilings where supported.
+# Which keyword arguments this Starlette's request.form() actually accepts.
+# Decided ONCE at import from the signature, never by calling and catching:
+# request.form() consumes the body stream, so a call that raised TypeError on
+# an unsupported kwarg could leave the stream half-read, and the retry would
+# then parse an empty body and see zero files -- turning every upload into a
+# spurious "no files uploaded" 400.
+def _supported_form_kwargs() -> dict:
+    import inspect
+    try:
+        params = inspect.signature(Request.form).parameters
+    except (TypeError, ValueError):
+        return {}
+    kw = {}
+    if "max_files" in params:
+        kw["max_files"] = MAX_FILES
+    if "max_part_size" in params:
+        kw["max_part_size"] = MAX_UPLOAD_MB * 1024 * 1024
+    return kw
 
-    Older Starlette releases lack these keyword arguments; the middleware
-    Content-Length check is the backstop that works on every version, so fall
-    back rather than pinning a floor that the local venv may not satisfy.
+
+_FORM_KWARGS = _supported_form_kwargs()
+
+
+async def parse_form(request: Request):
+    """Parse multipart, applying per-part and part-count ceilings if supported.
+
+    The middleware Content-Length check is the version-independent backstop; the
+    kwargs here are the precise per-part limit where Starlette offers it.
     """
     try:
-        return await request.form(
-            max_files=MAX_FILES,
-            max_part_size=MAX_UPLOAD_MB * 1024 * 1024,
-        )
-    except TypeError:
-        return await request.form()
+        return await request.form(**_FORM_KWARGS)
     except MultiPartException:
         # Starlette signals "a part blew the ceiling" this way; unhandled it
         # surfaces as a vague 400 about parsing the body.

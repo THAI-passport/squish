@@ -151,27 +151,19 @@ expecting Word.
 
 ---
 
-## Phase 4 — AI features: a policy decision, not an engineering one
+## AI features — decided: no
 
 iLovePDF has Summarize, Translate and Chat-with-PDF. All three require sending
-document content to a language model.
+document content to a language model, and **that is a line Squish does not
+cross.** The product's one claim is "None of your files leave," and it is the
+exact thing iLovePDF cannot say. A summarise button that posts your document to
+an external API would make the claim false, so it is out — not deferred, not
+gated behind a flag, out.
 
-**Squish's homepage currently says "None of your files leave."** Adding a
-feature that posts document text to an external API makes that claim false. The
-question is not how to build it — it is a few days' work — but which of these
-you choose:
-
-1. **Don't.** Keep the privacy claim absolute. It is the product's actual
-   differentiator against iLovePDF, which cannot make it.
-2. **Local model only.** Ollama sidecar, small quantised model. Claim survives
-   intact. Costs real GPU/CPU and quality is well below a frontier model.
-3. **External API, disabled by default.** Off unless `LLM_API_KEY` is set; when
-   on, an unmissable interstitial before the first send. Homepage copy changes
-   to "Your files never leave, unless you turn on AI tools."
-
-Option 3 is defensible. Option 3 *without* the copy change is not — that is the
-kind of quiet contradiction that costs you the trust the product is built on.
-Whichever you pick, pick it deliberately.
+If a future user genuinely needs it, the only acceptable shape is a fully local
+model (an Ollama sidecar) so nothing leaves the box, and it would ship disabled
+by default. Even then it is a distant maybe, not a plan. Do not add an
+external-API AI feature to this codebase.
 
 ---
 
@@ -245,12 +237,12 @@ Office→PDF are the obvious candidates.
 4. **Accessibility pass (~2 d).** Cheap, and the longer it waits the more
    surface it has to cover.
 5. **Progress + batch + chaining UI (~4 d).**
-6. **Decide the AI question.** It is a positioning decision and it should be
-   made before the homepage copy sets in people's minds.
-7. **Phase 2 engines**, as demand dictates. HTML→PDF only with the SSRF
+6. **Phase 2 engines**, as demand dictates. HTML→PDF only with the SSRF
    mitigations written first, not after.
-8. **Phase 3** only when tool chaining or annotation is genuinely wanted. Take
+7. **Phase 3** only when tool chaining or annotation is genuinely wanted. Take
    the minimum break: object storage plus a session ID, nothing more.
+
+AI tools are deliberately absent from this sequence — see "AI features" above.
 
 Phases 1 through 5 are roughly three weeks and get you to real parity on
 everything except the visual editor, forms and AI.
@@ -263,12 +255,11 @@ These need your answer, not mine:
 
 1. **PyMuPDF's AGPL licence** — internal use, open source, commercial licence,
    or swap engines? The swap costs real redaction, so this shapes the security
-   story.
-2. **The AI question** — options 1, 2 or 3 above.
-3. **Is this multi-tenant or personal?** Everything above assumes trusted
+   story. (Repo currently ships AGPL-3.0.)
+2. **Is this multi-tenant or personal?** Everything above assumes trusted
    users. Public exposure adds rate limiting, per-IP quotas, abuse handling,
    and makes PDF-parser hardening a priority rather than a nicety — malicious
    PDFs are a real attack vector against Ghostscript in particular, which has a
    long CVE history.
-4. **Does anyone need the API without the UI?** If yes, version the endpoints
+3. **Does anyone need the API without the UI?** If yes, version the endpoints
    as `/api/v1/` now, while it costs nothing.
