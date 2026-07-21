@@ -19,7 +19,7 @@ VERSION=$(grep -o "\"[^\"]*${MARKER}[^\"]*\"" backend/app.py | head -1 | tr -d '
 echo "source version: $VERSION"
 
 echo "== 2/4 stop anything on :$PORT =="
-pkill -f "uvicorn app:app" 2>/dev/null && echo "killed stale uvicorn" || true
+if pkill -f "uvicorn app:app" 2>/dev/null; then echo "killed stale uvicorn"; fi
 if [ "$MODE" = auto ]; then
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then MODE=docker; else MODE=native; fi
 fi
@@ -60,12 +60,12 @@ for _ in $(seq 1 60); do
 done
 if [ -z "$ok" ]; then
   echo "FAIL: no health response."
-  [ "$MODE" = native ] && tail -30 squish.log || docker compose logs --tail 40
+  if [ "$MODE" = native ]; then tail -30 squish.log; else docker compose logs --tail 40; fi
   exit 1
 fi
 curl -s "http://localhost:$PORT/api/health"; echo
 curl -s "http://localhost:$PORT/api/health" | grep -q -e "$MARKER" || {
   echo "VERDICT: OLD SERVER still answering on :$PORT"; exit 1; }
 echo "VERDICT: NEW CODE RUNNING ($VERSION)"
-command -v open >/dev/null && open "http://localhost:$PORT" || true
+if command -v open >/dev/null; then open "http://localhost:$PORT"; fi
 echo "Open http://localhost:$PORT"
