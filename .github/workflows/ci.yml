@@ -89,7 +89,7 @@ jobs:
       - uses: actions/checkout@v4
       # LibreOffice and Ghostscript drag in a large dependency tree with a
       # steady CVE flow, so this is the check most likely to actually fire.
-      - uses: aquasecurity/trivy-action@0.24.0
+      - uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ env.IMAGE }}:sha-${{ github.sha }}
           format: sarif
