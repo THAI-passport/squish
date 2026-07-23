@@ -493,3 +493,38 @@ def test_merge_falls_back_to_smart_default(work, pdf, pdf2):
     r = T.merge(work, [pdf, pdf2], {})
     # fixtures are sample.pdf + second.pdf -> "sample+second.pdf"
     assert r.filename == "sample+second.pdf"
+
+
+# ------------------------------------------------------------ auto-redact ---
+
+def _pdf_with(work, text):
+    p = work / "doc.pdf"
+    d = fitz.open()
+    pg = d.new_page()
+    pg.insert_text((72, 100), text, fontsize=12)
+    d.save(p); d.close()
+    return p
+
+
+def test_auto_redact_removes_an_email(work):
+    src = _pdf_with(work, "reach me at alice@example.com today")
+    r = T.auto_redact(work, [src], {"redact_email": "1"})
+    assert "alice@example.com" not in text_of(r.path)
+
+
+def test_auto_redact_needs_a_type_selected(work, pdf):
+    with pytest.raises(T.ToolError, match="at least one"):
+        T.auto_redact(work, [pdf], {})
+
+
+def test_extract_fonts_reports_when_none_embedded(work, pdf):
+    # The fixtures use base-14 fonts (helv), which are not embedded, so this
+    # should raise cleanly rather than produce an empty archive.
+    with pytest.raises(T.ToolError, match="no embedded fonts"):
+        T.extract_fonts(work, [pdf], {})
+
+
+def test_pdf_to_text_extracts_the_layer(work, pdf):
+    r = T.pdf_to_text(work, [pdf], {})
+    assert r.filename.endswith(".txt")
+    assert r.path.read_text()

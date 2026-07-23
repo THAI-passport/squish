@@ -27,7 +27,7 @@ def test_health_reports_a_version(client):
 
 def test_health_lists_engine_availability(client):
     engines = client.get("/api/health").json()["engines"]
-    assert set(engines) == {"gs", "soffice", "tesseract", "ocrmypdf", "qpdf"}
+    assert set(engines) == {"gs", "soffice", "tesseract", "ocrmypdf", "qpdf", "exiftool"}
     assert all(isinstance(v, bool) for v in engines.values())
 
 
@@ -87,10 +87,17 @@ def test_empty_upload_is_rejected(client):
     assert r.status_code == 400
 
 
+def test_magic_bytes_rejected(client):
+    r = client.post("/api/t/split",
+                    files={"files": ("bad.pdf", b"this is not a pdf file", "application/pdf")})
+    assert r.status_code == 400
+    assert "valid PDF" in r.json()["detail"]
+
+
 def test_oversized_upload_is_rejected_midstream(client, monkeypatch):
     """The cap must bite while receiving, not after buffering the whole file."""
     monkeypatch.setattr(A, "MAX_UPLOAD_MB", 1)
-    blob = io.BytesIO(b"\0" * (3 * 1024 * 1024))
+    blob = io.BytesIO(b"%PDF-1.4\n" + b"\0" * (3 * 1024 * 1024))
     r = client.post("/api/t/split",
                     files={"files": ("big.pdf", blob, "application/pdf")})
     assert r.status_code == 413
@@ -236,7 +243,7 @@ def test_timeout_keeps_the_concurrency_slot_until_the_thread_ends(client, pdf,
 
 def test_body_over_the_total_cap_is_refused_before_parsing(client, monkeypatch):
     monkeypatch.setattr(A, "MAX_TOTAL_UPLOAD_MB", 1)
-    blob = io.BytesIO(b"\0" * (2 * 1024 * 1024))
+    blob = io.BytesIO(b"%PDF-1.4\n" + b"\0" * (2 * 1024 * 1024))
     r = client.post("/api/t/split",
                     files={"files": ("big.pdf", blob, "application/pdf")})
     assert r.status_code == 413
@@ -245,3 +252,29 @@ def test_body_over_the_total_cap_is_refused_before_parsing(client, monkeypatch):
 
 def test_health_publishes_the_total_upload_cap(client):
     assert "max_total_upload_mb" in client.get("/api/health").json()
+
+
+# ------------------------------------------------ magic-byte validation ---
+
+def test_non_pdf_is_rejected_on_a_pdf_tool(client):
+    r = client.post("/api/t/split", data={"pages": "1"},
+                    files={"files": ("evil.pdf", b"this is not a pdf at all", "application/pdf")})
+    assert r.status_code == 400
+    assert "valid PDF" in r.json()["detail"]
+
+
+def test_pdf_with_leading_bom_passes_the_magic_gate(client):
+    # A BOM before %PDF- must not be rejected by the magic check. It will still
+    # fail to parse (not a real PDF), but with a DIFFERENT error than the gate.
+    body = b"\xef\xbb\xbf%PDF-1.4 not really a document"
+    r = client.post("/api/t/split", data={"pages": "1"},
+                    files={"files": ("x.pdf", body, "application/pdf")})
+    assert "valid PDF" not in r.json().get("detail", "")
+
+
+def test_repair_is_exempt_from_the_magic_gate(client):
+    # Repair exists to fix broken PDFs, which may lack a clean header. The magic
+    # check must be skipped for it -- so the error must NOT be the gate message.
+    r = client.post("/api/t/repair",
+                    files={"files": ("broken.pdf", b"garbage without a header", "application/pdf")})
+    assert "does not appear to be a valid PDF" not in r.json().get("detail", "")

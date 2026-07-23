@@ -6,6 +6,7 @@
 <title>Squish — every PDF tool, on your own machine</title>
 <meta name="description" content="Merge, split, compress, convert, OCR, protect and redact PDFs. Runs entirely on your own hardware; files are deleted the moment the download finishes.">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.json">
 <style>
 /* ---------------------------------------------------------------- theme --
    Brand: ink-navy ground, violet accent. Deliberately not Adobe red and not
@@ -1147,6 +1148,12 @@ boot().then(() => {
   const k = location.hash.slice(1);
   if(k && TOOLS.some(t => t.key === k)) open_(k);
 });
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW setup failed', err));
+  });
+}
 </script>
 </body>
 </html>

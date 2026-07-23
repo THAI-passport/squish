@@ -41,7 +41,7 @@ else
   # Native mode uses whatever engines are on your PATH. Missing ones are not
   # fatal: /api/tools reports them and the UI greys those tools out.
   missing=""
-  for bin in gs qpdf soffice ocrmypdf; do
+  for bin in gs qpdf soffice ocrmypdf exiftool; do
     command -v "$bin" >/dev/null || { echo "note: $bin not found -- related tools disabled"; missing=1; }
   done
   [ -n "$missing" ] && echo "  to enable them, see the Engines section in README.md (or just use docker)"

@@ -1,0 +1,16 @@
+{
+  "name": "Squish PDF",
+  "short_name": "Squish",
+  "description": "Every PDF tool, on your own machine. Pure local.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d0f1a",
+  "theme_color": "#7c5cff",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}

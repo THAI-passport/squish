@@ -23,7 +23,7 @@ ENV PYTHONUNBUFFERED=1 \
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends ghostscript qpdf fonts-dejavu-core \
-      util-linux; \
+      util-linux libimage-exiftool-perl; \
     if [ "$WITH_OCR" = "1" ]; then \
       apt-get install -y --no-install-recommends ocrmypdf tesseract-ocr unpaper pngquant; \
       for l in $OCR_LANGS; do \

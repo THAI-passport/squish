@@ -140,8 +140,9 @@ want and restart; the badges clear on the next health check.
 | Repair | qpdf | `brew install qpdf` | `apt install qpdf` |
 | OCR, PDF to PDF/A | ocrmypdf | `brew install ocrmypdf` | `apt install ocrmypdf` |
 | Office to PDF | LibreOffice | `brew install --cask libreoffice` | `apt install libreoffice` |
+| Deep Metadata Strip | ExifTool | `brew install exiftool` | `apt install libimage-exiftool-perl` |
 
-All four are free and open-source. Everything else — merge, split, rotate,
+All five are free and open-source. Everything else — merge, split, rotate,
 watermark, redact, the rest — is pure PyMuPDF and needs no external binary.
 
 ## Thumbnails (pdf.js)

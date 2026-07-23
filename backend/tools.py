@@ -703,6 +703,18 @@ def pdf_to_markdown(work: Path, inputs: list[Path], p: dict) -> Result:
     return Result(dest, "text/markdown", f"{base}.md")
 
 
+def pdf_to_text(work: Path, inputs: list[Path], p: dict) -> Result:
+    src = open_pdf(inputs[0], p.get("password", ""))
+    lines: list[str] = []
+    for pno in parse_pages(p.get("pages", ""), src.page_count):
+        lines.append(src[pno].get_text("text").strip())
+    src.close()
+    base = stem(inputs[0])
+    dest = work / f"{base}.txt"
+    dest.write_text("\n\n".join(lines).strip() + "\n", encoding="utf-8")
+    return Result(dest, "text/plain", f"{base}.txt")
+
+
 # ------------------------------------------------------------------ edit ---
 
 POSITIONS = {
@@ -883,6 +895,47 @@ def redact(work: Path, inputs: list[Path], p: dict) -> Result:
     return Result(dest, PDF, f"{base}_redacted.pdf")
 
 
+def auto_redact(work: Path, inputs: list[Path], p: dict) -> Result:
+    """Automatically find and redact sensitive patterns (Emails, SSNs, Phones, CCs)."""
+    src = open_pdf(inputs[0], p.get("password", ""))
+    fill = _hex_rgb(p.get("color") or "#000000")
+    
+    patterns = []
+    if p.get("redact_email"):
+        patterns.append(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
+    if p.get("redact_ssn"):
+        patterns.append(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b")
+    if p.get("redact_phone"):
+        patterns.append(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")
+    if p.get("redact_cc"):
+        patterns.append(r"\b(?:\d[ -]*?){13,16}\b")
+        
+    if not patterns:
+        src.close()
+        raise ToolError("select at least one type of information to redact")
+        
+    hits = 0
+    for pno in parse_pages(p.get("pages", ""), src.page_count):
+        page = src[pno]
+        text = page.get_text("text")
+        for pat in patterns:
+            for match in set(re.findall(pat, text)):
+                for rect in page.search_for(match, quads=False):
+                    page.add_redact_annot(rect, fill=fill)
+                    hits += 1
+        if hits > 0:
+            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_PIXELS)
+            
+    if not hits:
+        src.close()
+        raise ToolError("no matching patterns were found in the text layer")
+        
+    base = stem(inputs[0])
+    dest = save(src, work / f"{base}_auto_redacted.pdf")
+    src.close()
+    return Result(dest, PDF, f"{base}_auto_redacted.pdf")
+
+
 def compare(work: Path, inputs: list[Path], p: dict) -> Result:
     """Word-level diff of the two documents' text layers, as Markdown."""
     import difflib
@@ -959,6 +1012,38 @@ def extract_attachments(work: Path, inputs: list[Path], p: dict) -> Result:
     return Result(dest, ZIP, "attachments.zip")
 
 
+def extract_fonts(work: Path, inputs: list[Path], p: dict) -> Result:
+    """Recover embedded font files."""
+    src = open_pdf(inputs[0], p.get("password", ""))
+    base = stem(inputs[0])
+    files: list[Path] = []
+    seen: set[str] = set()
+    for pno in parse_pages(p.get("pages", ""), src.page_count):
+        for font in src.get_page_fonts(pno):
+            xref = font[0]
+            if xref in seen:
+                continue
+            seen.add(xref)
+            try:
+                font_name, ext, _, font_bytes = src.extract_font(xref)
+            except Exception as exc:
+                log.warning("xref %s font not extractable: %s", xref, exc)
+                continue
+            if not font_bytes:
+                continue
+            name = safe_component(f"{font_name}.{ext}")
+            f = work / f"{base}_p{pno + 1}_{name}"
+            f.write_bytes(font_bytes)
+            files.append(f)
+    src.close()
+    if not files:
+        raise ToolError("no embedded fonts found")
+    if len(files) == 1:
+        return Result(files[0], "application/octet-stream", files[0].name)
+    dest = zip_dir(files, work / f"{base}_fonts.zip")
+    return Result(dest, ZIP, f"{base}_fonts.zip")
+
+
 def safe_component(name: str) -> str:
     # os.path.basename does NOT split on backslashes on Linux, so a Windows
     # path (`..\..\system32`) would arrive whole and its `..` survive. Normalise
@@ -981,8 +1066,16 @@ def metadata(work: Path, inputs: list[Path], p: dict) -> Result:
     forget: clearing the info dictionary alone leaves author and software
     fingerprints sitting in the XMP packet.
     """
-    src = open_pdf(inputs[0], p.get("password", ""))
     base = stem(inputs[0])
+    dest = work / f"{base}_metadata.pdf"
+
+    # NOTE: do NOT use `exiftool -all=` to strip a PDF. exiftool cannot truly
+    # delete PDF metadata -- PDF is incremental, so it appends an update and the
+    # original info/XMP stays recoverable in the file (exiftool itself warns of
+    # this). PyMuPDF's save() rewrites the document with garbage collection, so
+    # the cleared info dict and XMP packet are actually gone. That rewrite is
+    # the authoritative strip; exiftool would only add a false sense of safety.
+    src = open_pdf(inputs[0], p.get("password", ""))
     if p.get("strip"):
         src.set_metadata({})
         src.del_xml_metadata()
@@ -992,9 +1085,99 @@ def metadata(work: Path, inputs: list[Path], p: dict) -> Result:
             if p.get(k) is not None:
                 meta[k] = str(p.get(k))
         src.set_metadata(meta)
-    dest = save(src, work / f"{base}_metadata.pdf")
+    save(src, dest)
     src.close()
     return Result(dest, PDF, f"{base}_metadata.pdf")
+
+
+def sign_pdf(work: Path, inputs: list[Path], p: dict) -> Result:
+    """Sign a PDF using a PKCS#12 (.p12/.pfx) certificate."""
+    pdfs = [f for f in inputs if f.suffix.lower() == ".pdf"]
+    p12s = [f for f in inputs if f.suffix.lower() in (".p12", ".pfx")]
+    if not pdfs or not p12s:
+        raise ToolError("sign-pdf requires both a PDF and a .p12 certificate file")
+    
+    pdf_file = pdfs[0]
+    p12_file = p12s[0]
+    password = p.get("password_cert", "").encode("utf8")
+    if not password:
+        raise ToolError("certificate password is required")
+        
+    try:
+        from pyhanko.sign import signers
+        from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+    except ImportError:
+        raise ToolError("pyhanko is not installed")
+        
+    try:
+        signer = signers.SimpleSigner.load_pkcs12(str(p12_file), passphrase=password)
+    except Exception as exc:
+        raise ToolError(f"could not load certificate: {exc}")
+
+    base = stem(pdf_file)
+    dest = work / f"{base}_signed.pdf"
+
+    # pyhanko's high-level signers.sign_pdf(writer, meta, signer=, output=)
+    # writes the signed document to `output` and returns the stream -- there is
+    # no .write_to_stream() on the result. Use a `with` for both handles so the
+    # output file is closed even when signing raises.
+    try:
+        with open(pdf_file, "rb") as doc_in, open(dest, "wb") as out_file:
+            w = IncrementalPdfFileWriter(doc_in)
+            signers.sign_pdf(
+                w,
+                signers.PdfSignatureMetadata(field_name="Signature1"),
+                signer=signer,
+                output=out_file,
+            )
+    except Exception as exc:
+        raise ToolError(f"signing failed: {exc}")
+
+    return Result(dest, PDF, f"{base}_signed.pdf")
+
+
+def verify_signature(work: Path, inputs: list[Path], p: dict) -> Result:
+    """Verify signatures on a PDF document."""
+    try:
+        from pyhanko.sign import validation
+        from pyhanko.pdf_utils.reader import PdfFileReader
+    except ImportError:
+        raise ToolError("pyhanko is not installed")
+        
+    pdf_file = inputs[0]
+    out = []
+    try:
+        with open(pdf_file, 'rb') as doc_in:
+            r = PdfFileReader(doc_in)
+            if not r.embedded_signatures:
+                raise ToolError("this document has no digital signatures")
+                
+            for sig in r.embedded_signatures:
+                try:
+                    # No trust context is supplied, so this reports cryptographic
+                    # integrity (intact/valid), not a trusted-chain verdict --
+                    # SimpleCertificateValidator is not a real pyhanko class.
+                    status = validation.validate_pdf_signature(sig)
+                    out.append(f"Signature '{sig.field_name}': "
+                               f"{'INTACT' if status.intact else 'MODIFIED'}")
+                    out.append(f"  Cryptographically valid: {status.valid}")
+                    out.append(f"  Covers whole document: "
+                               f"{not status.modification_level or status.modification_level.name}")
+                    try:
+                        out.append(f"  Signer: {status.signing_cert.subject.human_friendly}")
+                    except Exception:
+                        pass
+                except Exception as exc:
+                    out.append(f"Signature '{sig.field_name}': ERROR ({exc})")
+    except ToolError:
+        raise
+    except Exception as exc:
+        raise ToolError(f"could not read signatures: {exc}")
+        
+    base = stem(pdf_file)
+    dest = work / f"{base}_signatures.txt"
+    dest.write_text("\n".join(out) + "\n", encoding="utf-8")
+    return Result(dest, "text/plain", f"{base}_signatures.txt")
 
 
 def flatten(work: Path, inputs: list[Path], p: dict) -> Result:
@@ -1312,6 +1495,9 @@ TOOLS: list[Tool] = [
     Tool("pdf-to-markdown", "PDF to Markdown", "Convert from PDF",
          "Extract the text layer as Markdown, page by page.",
          pdf_to_markdown, fields=[PAGES]),
+    Tool("pdf-to-text", "PDF to Text", "Convert from PDF",
+         "Extract the raw text layer as a .txt file.",
+         pdf_to_text, fields=[PAGES]),
     Tool("extract-images", "Extract images", "Convert from PDF",
          "Recover embedded images at their original resolution.",
          extract_images, fields=[
@@ -1323,6 +1509,9 @@ TOOLS: list[Tool] = [
     Tool("extract-attachments", "Extract attachments", "Convert from PDF",
          "Pull out files embedded inside the PDF.",
          extract_attachments),
+    Tool("extract-fonts", "Extract fonts", "Convert from PDF",
+         "Recover embedded font files.",
+         extract_fonts, fields=[PAGES]),
     # -- edit
     Tool("watermark", "Add watermark", "Edit",
          "Stamp text across the page, once or tiled.",
@@ -1414,6 +1603,24 @@ TOOLS: list[Tool] = [
              F("color", "color", "Box colour", default="#000000"),
              PAGES,
          ]),
+    Tool("auto-redact", "Auto-redact", "Security",
+         "Automatically black out emails, phone numbers, SSNs, or credit cards.",
+         auto_redact, fields=[
+             F("redact_email", "checkbox", "Redact Emails"),
+             F("redact_ssn", "checkbox", "Redact SSNs"),
+             F("redact_phone", "checkbox", "Redact Phone Numbers"),
+             F("redact_cc", "checkbox", "Redact Credit Cards"),
+             F("color", "color", "Box colour", default="#000000"),
+             PAGES,
+         ]),
+    Tool("sign-pdf", "Sign PDF", "Security",
+         "Digitally sign a PDF using your own .p12 or .pfx certificate.",
+         sign_pdf, multi=True, min_files=2, accept=".pdf,.p12,.pfx", fields=[
+             F("password_cert", "password", "Certificate password", required=True),
+         ]),
+    Tool("verify-signature", "Verify Signature", "Security",
+         "Check the validity of digital signatures on a PDF.",
+         verify_signature),
     Tool("compare", "Compare PDFs", "Security",
          "Line-by-line diff of two documents' text.",
          compare, multi=True, min_files=2),

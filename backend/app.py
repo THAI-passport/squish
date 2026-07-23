@@ -47,7 +47,7 @@ log = logging.getLogger("uvicorn.error")
 
 APP_TITLE = "Squish"
 # run-local.sh greps for the "-squish" marker to prove new code is running.
-APP_VERSION = "1.2.4-squish"
+APP_VERSION = "1.3.0-squish"
 
 # ---------------------------------------------------------------- config ---
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "200"))
@@ -131,7 +131,7 @@ def engines() -> dict[str, bool]:
     submit a job that is guaranteed to fail.
     """
     return {name: shutil.which(name) is not None
-            for name in ("gs", "soffice", "tesseract", "ocrmypdf", "qpdf")}
+            for name in ("gs", "soffice", "tesseract", "ocrmypdf", "qpdf", "exiftool")}
 
 
 # ------------------------------------------------------------- metrics ---
@@ -285,7 +285,10 @@ async def run_tool(key: str, request: Request):
     t0 = time.monotonic()
     job = None
     try:
-        inputs = await store(uploads, work)
+        # Magic-byte check only for single-type PDF tools -- and NOT repair,
+        # whose entire purpose is broken PDFs that may lack a clean %PDF- header.
+        require_pdf = tool.accept == ".pdf" and tool.key != "repair"
+        inputs = await store(uploads, work, require_pdf=require_pdf)
         # A timeout cannot cancel a running thread: asyncio.to_thread has no
         # way to interrupt the worker. The old code released the semaphore on
         # timeout while the thread kept burning CPU, so enough timeouts made
@@ -341,7 +344,7 @@ async def run_tool(key: str, request: Request):
     )
 
 
-async def store(uploads: list[UploadFile], work: Path) -> list[Path]:
+async def store(uploads: list[UploadFile], work: Path, require_pdf: bool = False) -> list[Path]:
     """Copy the parsed uploads to the scratch dir in chunks, enforcing caps.
 
     By the time this runs Starlette has already received the body, so this is
@@ -360,6 +363,12 @@ async def store(uploads: list[UploadFile], work: Path) -> list[Path]:
         size = 0
         with dest.open("wb") as fh:
             while chunk := await up.read(1 << 20):
+                if size == 0 and require_pdf:
+                    # Real PDFs may carry a UTF-8 BOM or a little junk before the
+                    # header, and readers accept it, so look within the first
+                    # 1 KB rather than demanding %PDF- at byte 0.
+                    if b"%PDF-" not in chunk[:1024]:
+                        raise HTTPException(400, f"{name} does not appear to be a valid PDF file")
                 size += len(chunk)
                 total += len(chunk)
                 if size > limit:
