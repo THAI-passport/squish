@@ -108,6 +108,60 @@ k8s/squish.yaml           8 documents: hardened deployment, HPA, PDB, ingress
 run-local.sh              venv or docker, version-verified
 ```
 
+## Engines
+
+Six tools shell out to a command-line engine rather than reimplementing it.
+**In Docker every engine is already installed** — `docker compose up --build`
+gives you all 32 tools with nothing to add.
+
+For a **native** run (`./run-local.sh` without Docker), the engines come from
+your `PATH`. A missing one is not an error: `/api/health` reports it and the UI
+greys out just those tools with a `needs <engine>` badge. Install the ones you
+want and restart; the badges clear on the next health check.
+
+| Tool(s) | Engine | macOS (Homebrew) | Debian / Ubuntu |
+|---|---|---|---|
+| Compress, Grayscale | Ghostscript | `brew install ghostscript` | `apt install ghostscript` |
+| Repair | qpdf | `brew install qpdf` | `apt install qpdf` |
+| OCR, PDF to PDF/A | ocrmypdf | `brew install ocrmypdf` | `apt install ocrmypdf` |
+| Office to PDF | LibreOffice | `brew install --cask libreoffice` | `apt install libreoffice` |
+
+All four are free and open-source. Everything else — merge, split, rotate,
+watermark, redact, the rest — is pure PyMuPDF and needs no external binary.
+
+## Running on Windows
+
+**Use Docker Desktop.** It is the recommended path and the only one that gives
+you all 32 tools with no extra setup — every engine is baked into the image,
+and the container is what caps memory:
+
+```powershell
+docker compose up --build          # http://localhost:8000
+```
+
+**WSL2** is the next best option: open an Ubuntu shell and follow the normal
+Linux instructions, including `apt install` for the engines. `run-local.sh`
+runs there unchanged.
+
+**Native Windows Python** works for the pure-PyMuPDF tools (merge, split,
+rotate, watermark, redact, page numbers, and the rest), with two caveats:
+
+- `run-local.sh` is a bash script and will not run in `cmd`/PowerShell. Start
+  the server directly:
+
+  ```powershell
+  py -m venv .venv
+  .venv\Scripts\pip install -r backend\requirements.txt
+  cd backend
+  ..\.venv\Scripts\uvicorn app:app --host 127.0.0.1 --port 8000
+  ```
+
+- The per-subprocess memory ceiling (`RLIMIT_AS` / `prlimit`) does not exist on
+  Windows, so the engine tools run without it. This is the main reason Docker
+  is preferred — a malformed PDF handed to Ghostscript can spike memory with
+  nothing to cap it. The engine binaries themselves (Ghostscript, qpdf,
+  LibreOffice) have Windows installers if you want those tools natively.
+
 ## Build variants
 
 ```bash

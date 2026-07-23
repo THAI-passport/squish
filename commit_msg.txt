@@ -1,0 +1,52 @@
+fix: correct upload handling, resource limits, and per-tool bugs; drop AI from roadmap
+
+Uploads were silently rejected and several tools misbehaved on edge cases.
+This makes the full test suite pass and hardens the request lifecycle, with
+docs for local engines and Windows.
+
+Request pipeline (app.py)
+- Import UploadFile from Starlette, not FastAPI. request.form() yields
+  starlette.datastructures.UploadFile; fastapi.UploadFile is a subclass, so the
+  isinstance() filter dropped every file and returned "no files uploaded" (400).
+  This failed the entire upload test suite.
+- Decide form() kwargs (max_files/max_part_size) once from the signature
+  instead of call-and-catch-TypeError, which consumed the body stream on the
+  first attempt and left the retry parsing an empty body.
+- Replace the un-awaited BackgroundTask cleanup on error paths with a direct
+  discard(); the coroutine was never awaited, leaking scratch dirs into tmpfs.
+- Hold the concurrency semaphore until the worker thread actually ends and defer
+  rmtree to its done-callback; a timeout can no longer free the slot or delete a
+  directory still being written.
+- Reject oversized bodies on Content-Length before parsing; add
+  MAX_TOTAL_UPLOAD_MB and surface it in /api/health and /api/tools.
+
+Tools (tools.py)
+- crop: set_cropbox works in unrotated space; map visible edges to unrotated
+  edges per rotation so rotated pages trim the correct sides.
+- pdf_to_jpg: omit jpg_quality for PNG (None reached the C layer).
+- pdf_to_powerpoint: size the deck from the first selected page and letterbox
+  mixed page sizes instead of stretching.
+- zip_dir: de-duplicate colliding basenames so no file is silently overwritten.
+- page_numbers/header_footer: {total} is the document page count, not the
+  selection size.
+- parse_pages: reject a bare "-" (typo, not select-all).
+- _hex_rgb: reject empty/None; callers pass an explicit default.
+- safe_component: normalise backslashes and strip leading dots so Windows path
+  traversal cannot survive.
+- _wrap_limits: prefer prlimit over preexec_fn (unsafe from a threaded parent);
+  return no preexec on Windows, where preexec_fn raises and resource is absent.
+
+Docs & deployment
+- README: add Engines section (per-tool install commands, macOS + Debian) and a
+  Running on Windows section (Docker / WSL2 / native).
+- Keep MAX_TOTAL_UPLOAD_MB in sync across compose tmpfs, k8s emptyDir, and the
+  ingress proxy-body-size annotation; install util-linux for prlimit.
+- run-local.sh points at the README Engines section when a binary is missing.
+
+Roadmap
+- Remove AI features (summarize/translate/chat) entirely: they send document
+  text off-box and break the "None of your files leave" guarantee.
+
+Tests
+- Add regressions for scratch-dir cleanup, semaphore-under-timeout, the body
+  cap, crop at 0/90/180/270, zip collisions, PNG quality, and prlimit wrapping.

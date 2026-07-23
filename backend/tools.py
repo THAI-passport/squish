@@ -120,6 +120,12 @@ def _wrap_limits(cmd: list[str]) -> tuple[list[str], Callable[[], None] | None]:
     which is every Linux image this ships in. macOS has no prlimit, and native
     `run-local.sh` is the case that matters there, so keep preexec_fn as the
     fallback: a small deadlock risk beats no memory ceiling at all.
+
+    Windows has neither prlimit nor preexec_fn -- passing preexec_fn on Windows
+    raises ValueError -- and the `resource` module does not exist there, so the
+    limits are simply unavailable. Return None; the engine still runs, just
+    without an in-process memory ceiling (Docker is the recommended Windows
+    path precisely because the container can cap memory instead).
     """
     if SUBPROC_MEM_MB <= 0 and SUBPROC_CPU_SEC <= 0:
         return cmd, None
@@ -133,6 +139,8 @@ def _wrap_limits(cmd: list[str]) -> tuple[list[str], Callable[[], None] | None]:
         wrapped.append("--core=0")
         # `--` keeps prlimit from eating flags that belong to the real command.
         return wrapped + ["--"] + cmd, None
+    if os.name != "posix":          # Windows: no prlimit, no preexec_fn
+        return cmd, None
     return cmd, _limits
 
 

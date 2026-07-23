@@ -40,9 +40,11 @@ else
   command -v python3 >/dev/null || { echo "FAIL: python3 missing"; exit 1; }
   # Native mode uses whatever engines are on your PATH. Missing ones are not
   # fatal: /api/tools reports them and the UI greys those tools out.
+  missing=""
   for bin in gs qpdf soffice ocrmypdf; do
-    command -v "$bin" >/dev/null || echo "note: $bin not found -- related tools disabled"
+    command -v "$bin" >/dev/null || { echo "note: $bin not found -- related tools disabled"; missing=1; }
   done
+  [ -n "$missing" ] && echo "  to enable them, see the Engines section in README.md (or just use docker)"
   [ -d .venv ] || python3 -m venv .venv
   ./.venv/bin/pip install -q --upgrade pip
   ./.venv/bin/pip install -q -r backend/requirements.txt
