@@ -27,6 +27,12 @@ Thumbs.db
 .vscode/
 *.swp
 
+# Vendored pdf.js -- fetched by backend/static/vendor/fetch-pdfjs.sh or at
+# Docker build. Large minified blobs; keep them out of the diff. The script and
+# README in that folder ARE tracked.
+backend/static/vendor/pdf.min.js
+backend/static/vendor/pdf.worker.min.js
+
 # Local overrides
 .env
 docker-compose.override.yml

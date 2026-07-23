@@ -454,3 +454,42 @@ def test_subprocess_limits_fall_back_to_preexec_without_prlimit(monkeypatch):
     monkeypatch.setattr(T.shutil, "which", lambda b: None)
     argv, preexec = T._wrap_limits(["gs", "-dBATCH"])
     assert argv == ["gs", "-dBATCH"] and preexec is T._limits
+
+
+# ------------------------------------------------- merge output naming ---
+
+def test_merge_default_name_two_files():
+    from pathlib import Path
+    ins = [Path("/tmp/report.pdf"), Path("/tmp/invoice.pdf")]
+    assert T.merge_default_name(ins) == "report+invoice"
+
+
+def test_merge_default_name_many_files():
+    from pathlib import Path
+    ins = [Path(f"/tmp/f{i}.pdf") for i in range(4)]
+    assert T.merge_default_name(ins) == "f0+3-more"
+
+
+def test_output_pdf_name_adds_extension_and_defaults():
+    assert T.output_pdf_name("", "fallback") == "fallback.pdf"
+    assert T.output_pdf_name("My Report", "fb") == "My Report.pdf"
+    assert T.output_pdf_name("thing.PDF", "fb") == "thing.pdf"        # no double ext
+
+
+def test_output_pdf_name_strips_traversal():
+    for bad in ["../../etc/passwd", "..\\win\\sys", "/abs/x"]:
+        out = T.output_pdf_name(bad, "fb")
+        assert "/" not in out and "\\" not in out and ".." not in out
+        assert out.endswith(".pdf")
+
+
+def test_merge_uses_custom_output_name(work, pdf, pdf2):
+    r = T.merge(work, [pdf, pdf2], {"output_name": "combined report"})
+    assert r.filename == "combined report.pdf"
+    assert r.path.name == "combined report.pdf"
+
+
+def test_merge_falls_back_to_smart_default(work, pdf, pdf2):
+    r = T.merge(work, [pdf, pdf2], {})
+    # fixtures are sample.pdf + second.pdf -> "sample+second.pdf"
+    assert r.filename == "sample+second.pdf"

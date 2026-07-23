@@ -287,6 +287,35 @@ def save(doc: fitz.Document, out: Path, shrink: bool = True) -> Path:
 
 # ------------------------------------------------------------- organize ---
 
+def merge_default_name(inputs: list[Path]) -> str:
+    """A name that says what went in: 'a+b' for two, 'a+3-more' beyond that.
+
+    Mirrors smartOutputName() in the UI so the field just previews the same
+    value the server would pick when the field is left blank.
+    """
+    stems = [stem(f) for f in inputs]
+    stems = [s for s in stems if s]
+    if not stems:
+        return "merged"
+    if len(stems) == 1:
+        return stems[0]
+    if len(stems) == 2:
+        return f"{stems[0]}+{stems[1]}"
+    return f"{stems[0]}+{len(stems) - 1}-more"
+
+
+def output_pdf_name(raw: str, fallback: str) -> str:
+    """Sanitise a user-supplied output name into a safe `*.pdf` filename.
+
+    The name reaches Content-Disposition and the temp path, so it must not
+    escape the directory or carry control characters -- reuse safe_component,
+    which already strips traversal, then guarantee the extension.
+    """
+    name = safe_component(raw) if raw and raw.strip() else fallback
+    name = re.sub(r"\.pdf$", "", name, flags=re.IGNORECASE) or fallback
+    return f"{name[:100]}.pdf"
+
+
 def merge(work: Path, inputs: list[Path], p: dict) -> Result:
     if len(inputs) < 2:
         raise ToolError("merge needs at least 2 files")
@@ -295,9 +324,10 @@ def merge(work: Path, inputs: list[Path], p: dict) -> Result:
         src = open_pdf(f, p.get("password", ""))
         out.insert_pdf(src)
         src.close()
-    dest = save(out, work / "merged.pdf")
+    name = output_pdf_name(p.get("output_name", ""), merge_default_name(inputs))
+    dest = save(out, work / name)
     out.close()
-    return Result(dest, PDF, "merged.pdf")
+    return Result(dest, PDF, name)
 
 
 def split(work: Path, inputs: list[Path], p: dict) -> Result:
@@ -1158,14 +1188,21 @@ def F(name: str, kind: str, label: str, **kw) -> dict:
     return {"name": name, "kind": kind, "label": label, **kw}
 
 
+# `picker` drives the visual page grid in the UI. "select" = a set of pages to
+# act on (blank still means all); the UI keeps this field and the grid in sync
+# two ways. remove-pages and organize declare their own variants below.
 PAGES = F("pages", "text", "Pages", placeholder="all, or 1-3,7,10-",
-          help="Blank means every page.")
+          help="Blank means every page.", picker="select")
 
 TOOLS: list[Tool] = [
     # -- organize
     Tool("merge", "Merge PDF", "Organize",
          "Combine several PDFs into one, in the order you arrange them.",
-         merge, multi=True, min_files=2),
+         merge, multi=True, min_files=2, fields=[
+             F("output_name", "text", "Output name", placeholder="merged",
+               help="Auto-filled from your files; edit if you like. "
+                    "The .pdf extension is added automatically."),
+         ]),
     Tool("split", "Split PDF", "Organize",
          "Pull out a range, or burst the file into separate documents.",
          split, fields=[
@@ -1178,12 +1215,15 @@ TOOLS: list[Tool] = [
          ]),
     Tool("remove-pages", "Remove pages", "Organize",
          "Delete the pages you name and keep everything else.",
-         remove_pages, fields=[PAGES]),
+         remove_pages, fields=[
+             F("pages", "text", "Pages to remove", placeholder="e.g. 2 or 4-6",
+               help="The pages to delete.", picker="remove"),
+         ]),
     Tool("organize", "Reorder pages", "Organize",
          "Rebuild the document in an explicit page order.",
          organize, fields=[
              F("pages", "text", "New order", placeholder="3,1,2,4-",
-               help="Pages appear in exactly this order."),
+               help="Pages appear in exactly this order.", picker="order"),
          ]),
     Tool("rotate", "Rotate PDF", "Organize",
          "Turn pages a quarter, half or three-quarter turn.",

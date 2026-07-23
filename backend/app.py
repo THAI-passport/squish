@@ -47,7 +47,7 @@ log = logging.getLogger("uvicorn.error")
 
 APP_TITLE = "Squish"
 # run-local.sh greps for the "-squish" marker to prove new code is running.
-APP_VERSION = "1.2.1-squish"
+APP_VERSION = "1.2.4-squish"
 
 # ---------------------------------------------------------------- config ---
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "200"))

@@ -45,6 +45,12 @@ else
     command -v "$bin" >/dev/null || { echo "note: $bin not found -- related tools disabled"; missing=1; }
   done
   [ -n "$missing" ] && echo "  to enable them, see the Engines section in README.md (or just use docker)"
+  # Best-effort vendor of pdf.js for in-browser thumbnails. Non-fatal: without
+  # it the UI just shows document icons instead of page previews.
+  if [ ! -f backend/static/vendor/pdf.min.js ]; then
+    ( cd backend/static/vendor && ./fetch-pdfjs.sh ) \
+      || echo "note: pdf.js not vendored -- thumbnails will fall back to icons"
+  fi
   [ -d .venv ] || python3 -m venv .venv
   ./.venv/bin/pip install -q --upgrade pip
   ./.venv/bin/pip install -q -r backend/requirements.txt

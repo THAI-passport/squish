@@ -1,52 +1,38 @@
-fix: correct upload handling, resource limits, and per-tool bugs; drop AI from roadmap
+feat: in-browser PDF previews, visual page picker, editable merge name
 
-Uploads were silently rejected and several tools misbehaved on edge cases.
-This makes the full test suite pass and hardens the request lifecycle, with
-docs for local engines and Windows.
+Add client-side PDF rendering (vendored pdf.js) and richer file interactions
+across the UI, plus a smarter merge output name. No document ever leaves the
+browser — pdf.js renders locally and is served from the app, not a CDN.
 
-Request pipeline (app.py)
-- Import UploadFile from Starlette, not FastAPI. request.form() yields
-  starlette.datastructures.UploadFile; fastapi.UploadFile is a subclass, so the
-  isinstance() filter dropped every file and returned "no files uploaded" (400).
-  This failed the entire upload test suite.
-- Decide form() kwargs (max_files/max_part_size) once from the signature
-  instead of call-and-catch-TypeError, which consumed the body stream on the
-  first attempt and left the retry parsing an empty body.
-- Replace the un-awaited BackgroundTask cleanup on error paths with a direct
-  discard(); the coroutine was never awaited, leaking scratch dirs into tmpfs.
-- Hold the concurrency semaphore until the worker thread actually ends and defer
-  rmtree to its done-callback; a timeout can no longer free the slot or delete a
-  directory still being written.
-- Reject oversized bodies on Content-Length before parsing; add
-  MAX_TOTAL_UPLOAD_MB and surface it in /api/health and /api/tools.
+UI (backend/static/index.html)
+- Row thumbnails: multi-file tools show a first-page preview per file, lazily
+  rendered, falling back to an icon if pdf.js is absent or a file won't parse.
+- Drag-to-reorder file rows for multi-file tools; keyboard move button kept as
+  the accessible path.
+- Visual page picker for single-PDF page tools (split, remove-pages, reorder,
+  rotate, crop, render, …): a grid of every page with three registry-driven
+  modes — select (keep), remove (red), and order (drag to arrange). The grid
+  and the page-range box sync both ways; the box stays authoritative on submit
+  and is the keyboard path. Lazy render via IntersectionObserver, with an
+  opt-in prompt above 600 pages. Picker tears down (destroys the pdf.js doc,
+  removes listeners) on tool/file change.
+- Editable merge output name, pre-filled from the input stems (report.pdf +
+  invoice.pdf -> report+invoice.pdf), overridable.
 
-Tools (tools.py)
-- crop: set_cropbox works in unrotated space; map visible edges to unrotated
-  edges per rotation so rotated pages trim the correct sides.
-- pdf_to_jpg: omit jpg_quality for PNG (None reached the C layer).
-- pdf_to_powerpoint: size the deck from the first selected page and letterbox
-  mixed page sizes instead of stretching.
-- zip_dir: de-duplicate colliding basenames so no file is silently overwritten.
-- page_numbers/header_footer: {total} is the document page count, not the
-  selection size.
-- parse_pages: reject a bare "-" (typo, not select-all).
-- _hex_rgb: reject empty/None; callers pass an explicit default.
-- safe_component: normalise backslashes and strip leading dots so Windows path
-  traversal cannot survive.
-- _wrap_limits: prefer prlimit over preexec_fn (unsafe from a threaded parent);
-  return no preexec on Windows, where preexec_fn raises and resource is absent.
+Backend (tools.py)
+- merge honors output_name; output_pdf_name() sanitizes via safe_component and
+  guarantees the .pdf extension; merge_default_name() mirrors the UI default.
+- pages fields carry a `picker` attr (select/remove/order) serialized through
+  /api/tools so the picker is registry-driven — no per-tool frontend code.
 
-Docs & deployment
-- README: add Engines section (per-tool install commands, macOS + Debian) and a
-  Running on Windows section (Docker / WSL2 / native).
-- Keep MAX_TOTAL_UPLOAD_MB in sync across compose tmpfs, k8s emptyDir, and the
-  ingress proxy-body-size annotation; install util-linux for prlimit.
-- run-local.sh points at the README Engines section when a binary is missing.
-
-Roadmap
-- Remove AI features (summarize/translate/chat) entirely: they send document
-  text off-box and break the "None of your files leave" guarantee.
+Vendoring & deployment
+- pdf.js vendored under backend/static/vendor (fetch-pdfjs.sh, README); fetched
+  at Docker build and by run-local.sh; gitignored blobs; icon fallback if absent.
+- Fix: load pdf.js from /vendor/ not /static/vendor/. StaticFiles is mounted at
+  root, so /static/... 404'd and silently disabled all previews.
 
 Tests
-- Add regressions for scratch-dir cleanup, semaphore-under-timeout, the body
-  cap, crop at 0/90/180/270, zip collisions, PNG quality, and prlimit wrapping.
+- Add merge naming/sanitize regressions (default name, extension, traversal,
+  custom + fallback).
+
+Bump APP_VERSION to 1.2.4-squish.

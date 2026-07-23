@@ -33,6 +33,21 @@ The UI is a single HTML file with no build step, no CDN and no external
 requests. The tool grid, the option inputs and the client-side validation are
 all generated from `GET /api/tools`.
 
+When you drop several PDFs into a multi-file tool like Merge, each row shows a
+**first-page thumbnail** and can be **dragged to reorder** (a keyboard move
+button stays for accessibility). Merge also has an **editable output name**,
+pre-filled from the input files (`report.pdf` + `invoice.pdf` →
+`report+invoice.pdf`).
+
+Single-file page tools (split, remove pages, reorder, rotate, crop, render,
+…) show a **visual page picker**: a grid of every page. Click pages to select
+them — highlighted to *keep* on most tools, marked in red to *remove* on Remove
+Pages — or **drag to reorder** on the Reorder tool. The picker and the page-range
+box stay in sync **both ways**: clicking rewrites the box, typing `1-3,7`
+re-highlights the grid. The box is never removed — it stays the authoritative
+value and the keyboard path. Thumbnails render in the browser with vendored
+pdf.js — see [Thumbnails](#thumbnails-pdfjs); no document ever leaves the page.
+
 **Adding a tool is one function plus one registry entry.** Write
 `fn(work, inputs, params) -> Result` in `backend/tools.py`, add a `Tool(...)`
 beside it, and it appears in the interface with its fields. There is no
@@ -128,6 +143,22 @@ want and restart; the badges clear on the next health check.
 
 All four are free and open-source. Everything else — merge, split, rotate,
 watermark, redact, the rest — is pure PyMuPDF and needs no external binary.
+
+## Thumbnails (pdf.js)
+
+The file rows render a first-page preview using **pdf.js**, served from
+`backend/static/vendor/` — not a CDN, so the page keeps its zero-external-request
+guarantee, and the PDF is rendered locally in the browser.
+
+The two library files are not committed (they are large minified blobs). Get
+them one of three ways:
+
+- **Docker** — fetched automatically at build time; containers ship with
+  thumbnails working.
+- **`./run-local.sh`** (native) — fetches them on first run if missing.
+- **Manually** — `cd backend/static/vendor && ./fetch-pdfjs.sh`.
+
+If the files are absent, nothing breaks: rows fall back to a document icon.
 
 ## Running on Windows
 

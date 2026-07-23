@@ -145,13 +145,69 @@ h2.group{
   display:flex; align-items:center; gap:10px; padding:9px 12px; border-radius:10px;
   background:var(--raise); border:1px solid var(--border); font-size:13.5px;
 }
+.files li.reorder{cursor:grab}
+.files li.dragging{opacity:.4}
+.files li.dropafter{box-shadow:0 2px 0 var(--accent)}
+.files li.dropbefore{box-shadow:0 -2px 0 var(--accent)}
+/* Thumbnail: fixed box so rows stay aligned whether the preview has rendered
+   yet or fell back to an icon. */
+.files li .thumb{
+  flex:0 0 auto; width:34px; height:44px; border-radius:4px; overflow:hidden;
+  display:grid; place-items:center; background:var(--panel);
+  border:1px solid var(--border); color:var(--dim); font-size:18px;
+}
+.files li .thumb canvas,.files li .thumb img{width:100%; height:100%; object-fit:cover; display:block}
+.files li .grip{flex:0 0 auto; color:var(--dim); cursor:grab; font-size:14px; user-select:none}
 .files li .nm{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .files li .sz{color:var(--dim); font-size:12px; font-variant-numeric:tabular-nums}
 .files li button{background:none; border:0; color:var(--dim); cursor:pointer; font-size:15px; padding:0 2px}
 .files li button:hover{color:var(--err)}
-.files li .mv{color:var(--dim); cursor:grab; font-size:13px}
+.files li .mv{color:var(--dim); cursor:pointer; font-size:13px}
+@media (prefers-reduced-motion: reduce){.files li{transition:none}}
 
 .fields{display:grid; gap:14px; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); margin-top:20px}
+
+/* ------------------------------------------------------- page picker --- */
+#pagePicker{margin-top:20px; border:1px solid var(--border); border-radius:12px;
+  padding:14px; background:color-mix(in srgb,var(--raise) 55%,transparent)}
+.pp-head{display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap}
+.pp-head h4{margin:0; font-size:14px}
+.pp-actions{display:flex; align-items:center; gap:8px}
+.pp-count{color:var(--muted); font-size:12px; font-variant-numeric:tabular-nums}
+.pp-btn{background:var(--raise); border:1px solid var(--border); color:var(--text);
+  border-radius:8px; padding:4px 10px; font-size:12px; cursor:pointer}
+.pp-btn:hover{border-color:var(--accent)}
+.pp-hint{color:var(--muted); font-size:12px; margin:8px 0 12px}
+.pp-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(84px,1fr));
+  gap:10px; max-height:420px; overflow:auto; padding:2px}
+.pp-tile{position:relative; border:2px solid var(--border); border-radius:8px;
+  background:var(--panel); cursor:pointer; padding:0; overflow:hidden;
+  aspect-ratio:0.77; display:grid; grid-template-rows:1fr auto}
+.pp-tile:focus-visible{outline:2px solid var(--accent-hi); outline-offset:2px}
+.pp-tile .pg-canvas{width:100%; height:100%; object-fit:contain; display:block;
+  background:var(--panel)}
+.pp-tile .pg-ph{display:grid; place-items:center; color:var(--dim); font-size:20px}
+.pp-tile .pg-num{font-size:11px; text-align:center; padding:2px 0;
+  color:var(--muted); background:var(--raise); font-variant-numeric:tabular-nums}
+/* selected (act-on) */
+.pp-tile.sel{border-color:var(--accent)}
+.pp-tile.sel .pg-num{background:var(--accent-solid); color:#fff}
+/* remove-mode selection reads as danger, not approval */
+.pp-tile.rm{border-color:var(--err)}
+.pp-tile.rm .pg-num{background:var(--err); color:#fff}
+.pp-tile.rm .pg-canvas{opacity:.45}
+.pp-tile .pg-badge{position:absolute; top:4px; right:5px; font-size:11px;
+  line-height:1; padding:2px 5px; border-radius:20px; background:var(--accent-solid);
+  color:#fff; font-variant-numeric:tabular-nums}
+.pp-tile.rm .pg-badge{background:var(--err)}
+/* order mode: draggable, shows position badge */
+.pp-tile.order{cursor:grab}
+.pp-tile.dragging{opacity:.4}
+.pp-tile.dropbefore{box-shadow:-3px 0 0 var(--accent)}
+.pp-tile.dropafter{box-shadow:3px 0 0 var(--accent)}
+.pp-tile.excluded{opacity:.35}
+.pp-tile.excluded .pg-badge{display:none}
+@media (prefers-reduced-motion: reduce){.pp-tile{transition:none}}
 .field{display:flex; flex-direction:column; gap:5px}
 .field.wide{grid-column:1/-1}
 .field label{font-size:12.5px; color:var(--muted); font-weight:600}
@@ -268,6 +324,22 @@ footer code{font-family:ui-monospace,Menlo,monospace}
 
     <div class="fields" id="fields"></div>
 
+    <!-- Visual page picker: populated for single-PDF tools that carry a
+         `pages` field (split, remove-pages, reorder, rotate, crop, …). Empty
+         and hidden otherwise. -->
+    <section id="pagePicker" hidden aria-labelledby="ppHeading">
+      <div class="pp-head">
+        <h4 id="ppHeading"></h4>
+        <div class="pp-actions">
+          <span class="pp-count" id="ppCount"></span>
+          <button type="button" class="pp-btn" id="ppAll"></button>
+          <button type="button" class="pp-btn" id="ppNone">Clear</button>
+        </div>
+      </div>
+      <p class="pp-hint" id="ppHint"></p>
+      <div class="pp-grid" id="ppGrid" role="listbox" aria-multiselectable="true"></div>
+    </section>
+
     <button class="go" id="go" onclick="submit()" disabled>Select a file to begin</button>
     <div class="bar" id="bar" role="progressbar" aria-label="Processing"><i></i></div>
     <!-- The result appears without a page change, so it must announce itself. -->
@@ -286,6 +358,366 @@ footer code{font-family:ui-monospace,Menlo,monospace}
 
 /* ------------------------------------------------------------- state --- */
 let TOOLS = [], LIMITS = {}, current = null, files = [];
+
+/* ------------------------------------------------------ pdf.js loader --- */
+// Vendored, not from a CDN. If the files are not present (nobody ran
+// fetch-pdfjs.sh) the load fails silently and thumbnails degrade to an icon --
+// pdfReady stays a rejected/absent promise and previewPdf() bails. No document
+// bytes ever leave the browser; pdf.js renders locally.
+let pdfReady = null;
+function loadPdfjs(){
+  if(pdfReady) return pdfReady;
+  pdfReady = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    // Served from the static mount, which is rooted at "/" (StaticFiles on "/"),
+    // so the on-disk backend/static/vendor/ is reached at /vendor/, not /static/.
+    s.src = '/vendor/pdf.min.js';
+    s.onload = () => {
+      if(window.pdfjsLib){
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdf.worker.min.js';
+        resolve(window.pdfjsLib);
+      } else { reject(new Error('pdfjsLib missing')); }
+    };
+    s.onerror = () => reject(new Error('pdf.js not vendored'));
+    document.head.append(s);
+  });
+  return pdfReady;
+}
+
+// Render the first page of a File into a small canvas. Thumbnails render in a
+// zone so slow files never block the UI, and any failure just leaves the icon.
+async function previewPdf(file, box){
+  let lib;
+  try { lib = await loadPdfjs(); } catch { return; }
+  try {
+    const buf = await file.arrayBuffer();
+    const doc = await lib.getDocument({data: buf}).promise;
+    const page = await doc.getPage(1);
+    const vp0 = page.getViewport({scale: 1});
+    // Fit the 34x44 box, capped by devicePixelRatio for crispness.
+    const scale = Math.min(34 / vp0.width, 44 / vp0.height) * (window.devicePixelRatio || 1);
+    const vp = page.getViewport({scale});
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(vp.width); canvas.height = Math.ceil(vp.height);
+    await page.render({canvasContext: canvas.getContext('2d'), viewport: vp}).promise;
+    box.textContent = ''; box.append(canvas);
+    doc.destroy();
+  } catch { /* keep the icon */ }
+}
+
+/* --------------------------------------------------- page picker --- */
+// A per-page thumbnail grid for single-PDF tools that carry a `pages` field.
+// Three modes come from the registry's `picker` attribute:
+//   select : a set of pages to act on   (split, rotate, crop, render, ...)
+//   remove : same, styled as deletion   (remove-pages)
+//   order  : a sequence, drag to arrange (organize / reorder)
+// The grid and the text box stay in sync BOTH ways: click/drag rewrites the
+// box, and typing in the box re-highlights the grid. The text box is never
+// removed -- it remains the authoritative value on submit and the accessible
+// path for keyboard users.
+const PP_MAX_AUTO = 600;   // above this, don't auto-render hundreds of canvases
+let pp = null;
+
+function ppField(){
+  if(!current || current.multi) return null;
+  return (current.fields || []).find(f => f.picker);
+}
+
+function compressRanges(nums){
+  nums = [...new Set(nums)].sort((a, b) => a - b);
+  const out = []; let i = 0;
+  while(i < nums.length){
+    let j = i;
+    while(j + 1 < nums.length && nums[j + 1] === nums[j] + 1) j++;
+    out.push(i === j ? `${nums[i]}` : `${nums[i]}-${nums[j]}`);
+    i = j + 1;
+  }
+  return out.join(',');
+}
+
+// Lenient parse for live typing: ignore junk rather than throwing (the server
+// still validates strictly on submit). Preserves order for the `order` mode.
+function parseSpecLoose(spec, total){
+  const out = [];
+  for(let chunk of (spec || '').split(',')){
+    chunk = chunk.trim(); if(!chunk) continue;
+    const m = chunk.match(/^(\d+)?\s*-\s*(\d+)?$/);
+    if(m){
+      if(!m[1] && !m[2]) continue;
+      let s = m[1] ? +m[1] : 1, e = m[2] ? +m[2] : total;
+      if(s < 1) s = 1; if(e > total) e = total; if(s > e) continue;
+      for(let k = s; k <= e; k++) out.push(k);
+    }else if(/^\d+$/.test(chunk)){
+      const v = +chunk; if(v >= 1 && v <= total) out.push(v);
+    }
+  }
+  return out;
+}
+
+function teardownPicker(){
+  const sec = document.getElementById('pagePicker');
+  if(sec){ sec.hidden = true; }
+  document.getElementById('ppGrid').innerHTML = '';
+  if(pp){
+    if(pp.input && pp._onText) pp.input.removeEventListener('input', pp._onText);
+    try { pp.io && pp.io.disconnect(); } catch {}
+    try { pp.doc && pp.doc.destroy(); } catch {}
+  }
+  pp = null;
+}
+
+// Decide whether the picker should be shown and (re)build it. Fire-and-forget
+// from drawFiles; safe to call on every file change.
+async function syncPagePicker(){
+  const field = ppField();
+  if(!field || files.length !== 1 || !isPdf(files[0])){ teardownPicker(); return; }
+  if(pp && pp.file === files[0] && pp.field === field.name) return;  // already built
+  await buildPagePicker(field, files[0]);
+}
+
+async function buildPagePicker(field, file){
+  teardownPicker();
+  let lib; try { lib = await loadPdfjs(); } catch { return; }   // no pdf.js -> box still works
+  let doc;
+  try { doc = await lib.getDocument({data: await file.arrayBuffer()}).promise; }
+  catch { return; }
+  // A late file swap could have happened while we awaited; bail if stale.
+  if(files[0] !== file){ try { doc.destroy(); } catch {} return; }
+
+  const total = doc.numPages;
+  const input = document.getElementById('f_' + field.name);
+  const mode = field.picker;  // select | remove | order
+  pp = {file, doc, total, mode, field: field.name, input,
+        tiles: new Map(), sel: new Set(), order: [], syncing: false, io: null};
+
+  // Seed state from whatever is already in the text box.
+  const parsed = parseSpecLoose(input ? input.value : '', total);
+  if(mode === 'order'){
+    const seq = parsed.length ? parsed : Array.from({length: total}, (_, i) => i + 1);
+    const inSeq = new Set(seq);
+    const rest = Array.from({length: total}, (_, i) => i + 1).filter(n => !inSeq.has(n));
+    pp.order = seq.map(n => ({n, on: true})).concat(rest.map(n => ({n, on: false})));
+  }else{
+    pp.sel = new Set(parsed);
+  }
+
+  document.getElementById('ppHeading').textContent =
+    mode === 'order' ? 'Arrange pages'
+    : mode === 'remove' ? 'Pages to remove' : 'Choose pages';
+  document.getElementById('ppHint').textContent =
+    mode === 'order'
+      ? 'Drag to reorder. Click a page to keep or drop it. The box above stays in sync.'
+      : mode === 'remove'
+      ? 'Click pages to mark them for removal — or type ranges above. Both stay in sync.'
+      : 'Click pages to select them — or type ranges above. Both stay in sync.';
+
+  const allBtn = document.getElementById('ppAll');
+  const noneBtn = document.getElementById('ppNone');
+  allBtn.textContent = mode === 'order' ? 'Reset order' : 'Select all';
+  noneBtn.hidden = mode === 'order';
+  allBtn.onclick = () => {
+    if(mode === 'order'){
+      pp.order = Array.from({length: total}, (_, i) => ({n: i + 1, on: true}));
+      buildTiles();
+    }else{
+      pp.sel = new Set(Array.from({length: total}, (_, i) => i + 1));
+      renderTiles();
+    }
+    writeFromPicker();
+  };
+  noneBtn.onclick = () => { pp.sel.clear(); renderTiles(); writeFromPicker(); };
+
+  pp.io = new IntersectionObserver(entries => {
+    for(const e of entries){
+      if(e.isIntersecting){
+        const t = e.target; pp.io.unobserve(t);
+        renderPageThumb(pp.doc, +t.dataset.n, t.querySelector('.pg-holder'));
+      }
+    }
+  }, {root: document.getElementById('ppGrid'), rootMargin: '250px'});
+
+  const sec = document.getElementById('pagePicker');
+  sec.hidden = false;
+
+  if(total > PP_MAX_AUTO){
+    // Rendering hundreds of pages is heavy; make the user opt in but keep the
+    // text box (and its sync) fully working meanwhile.
+    const grid = document.getElementById('ppGrid');
+    grid.innerHTML = '';
+    const note = document.createElement('button');
+    note.type = 'button'; note.className = 'pp-btn';
+    note.textContent = `Show thumbnails for ${total} pages`;
+    note.onclick = () => buildTiles();
+    grid.append(note);
+  }else{
+    buildTiles();
+  }
+
+  pp._onText = () => onPickerText();
+  if(input) input.addEventListener('input', pp._onText);
+  updateCount();
+}
+
+function makeTile(n){
+  const t = document.createElement('button');
+  t.type = 'button'; t.className = 'pp-tile'; t.dataset.n = n;
+  t.setAttribute('role', 'option');
+  t.setAttribute('aria-label', `Page ${n}`);
+  t.innerHTML =
+    '<div class="pg-holder pg-ph"><span aria-hidden="true">📄</span></div>' +
+    '<span class="pg-num"></span><span class="pg-badge" aria-hidden="true"></span>';
+  t.querySelector('.pg-num').textContent = n;
+  t.onclick = () => onTileClick(n);
+  pp.tiles.set(n, t);
+  pp.io.observe(t);
+  return t;
+}
+
+function buildTiles(){
+  const grid = document.getElementById('ppGrid');
+  grid.innerHTML = ''; pp.tiles.clear();
+  const seq = pp.mode === 'order'
+    ? pp.order.map(o => o.n)
+    : Array.from({length: pp.total}, (_, i) => i + 1);
+  for(const n of seq) grid.append(makeTile(n));
+  if(pp.mode === 'order') wireOrderDnD();
+  renderTiles();
+}
+
+async function renderPageThumb(doc, n, holder){
+  try{
+    const page = await doc.getPage(n);
+    const vp0 = page.getViewport({scale: 1});
+    const scale = Math.min(150 / vp0.width, 200 / vp0.height) * (window.devicePixelRatio || 1);
+    const vp = page.getViewport({scale});
+    const c = document.createElement('canvas');
+    c.className = 'pg-canvas';
+    c.width = Math.ceil(vp.width); c.height = Math.ceil(vp.height);
+    await page.render({canvasContext: c.getContext('2d'), viewport: vp}).promise;
+    holder.classList.remove('pg-ph'); holder.textContent = ''; holder.append(c);
+  }catch{ /* leave the icon */ }
+}
+
+function renderTiles(){
+  if(!pp) return;
+  if(pp.mode === 'order'){
+    let pos = 0;
+    for(const o of pp.order){
+      const t = pp.tiles.get(o.n); if(!t) continue;
+      t.classList.add('order');
+      t.classList.toggle('excluded', !o.on);
+      t.querySelector('.pg-badge').textContent = o.on ? String(++pos) : '';
+      t.setAttribute('aria-selected', o.on ? 'true' : 'false');
+    }
+  }else{
+    const cls = pp.mode === 'remove' ? 'rm' : 'sel';
+    for(const [n, t] of pp.tiles){
+      const on = pp.sel.has(n);
+      t.classList.toggle(cls, on);
+      t.querySelector('.pg-badge').textContent =
+        on ? (pp.mode === 'remove' ? '✕' : '✓') : '';
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+    }
+  }
+  updateCount();
+}
+
+function onTileClick(n){
+  if(pp.mode === 'order'){
+    const o = pp.order.find(x => x.n === n); if(o) o.on = !o.on;
+  }else{
+    if(pp.sel.has(n)) pp.sel.delete(n); else pp.sel.add(n);
+  }
+  renderTiles(); writeFromPicker();
+}
+
+// Grid -> text box.
+function writeFromPicker(){
+  if(!pp || !pp.input) return;
+  let val;
+  if(pp.mode === 'order'){
+    const seq = pp.order.filter(o => o.on).map(o => o.n);
+    const identity = seq.length === pp.total && seq.every((n, i) => n === i + 1);
+    val = identity ? '' : seq.join(',');
+  }else{
+    const nums = [...pp.sel];
+    // For select tools blank means "all", so collapse a full selection to blank.
+    val = (pp.mode !== 'remove' && nums.length === pp.total) ? '' : compressRanges(nums);
+  }
+  pp.syncing = true; pp.input.value = val; pp.syncing = false;
+  updateCount();
+}
+
+// Text box -> grid.
+function onPickerText(){
+  if(!pp || pp.syncing) return;
+  const parsed = parseSpecLoose(pp.input.value, pp.total);
+  if(pp.mode === 'order'){
+    const seq = parsed.length ? parsed : Array.from({length: pp.total}, (_, i) => i + 1);
+    const inSeq = new Set(seq);
+    const rest = Array.from({length: pp.total}, (_, i) => i + 1).filter(n => !inSeq.has(n));
+    pp.order = seq.map(n => ({n, on: true})).concat(rest.map(n => ({n, on: false})));
+    if(pp.tiles.size) buildTiles();
+  }else{
+    pp.sel = new Set(parsed);
+    if(pp.tiles.size) renderTiles();
+  }
+  updateCount();
+}
+
+function wireOrderDnD(){
+  let from = null;
+  for(const [n, t] of pp.tiles){
+    t.draggable = true;
+    t.addEventListener('dragstart', ev => {
+      from = n; t.classList.add('dragging');
+      ev.dataTransfer.effectAllowed = 'move';
+      ev.dataTransfer.setData('text/plain', String(n));
+    });
+    t.addEventListener('dragend', () => {
+      from = null;
+      pp.tiles.forEach(el => el.classList.remove('dragging', 'dropbefore', 'dropafter'));
+    });
+    t.addEventListener('dragover', ev => {
+      ev.preventDefault();
+      if(from === null || from === n) return;
+      const before = ev.clientX < t.getBoundingClientRect().left + t.offsetWidth / 2;
+      t.classList.toggle('dropbefore', before);
+      t.classList.toggle('dropafter', !before);
+    });
+    t.addEventListener('dragleave', () => t.classList.remove('dropbefore', 'dropafter'));
+    t.addEventListener('drop', ev => {
+      ev.preventDefault();
+      if(from === null) return;
+      const before = ev.clientX < t.getBoundingClientRect().left + t.offsetWidth / 2;
+      reorderOrder(from, n, before); from = null;
+    });
+  }
+}
+
+function reorderOrder(fromN, toN, before){
+  const arr = pp.order;
+  const fi = arr.findIndex(o => o.n === fromN);
+  const [it] = arr.splice(fi, 1);
+  let ti = arr.findIndex(o => o.n === toN);
+  if(!before) ti += 1;
+  arr.splice(ti, 0, it);
+  buildTiles(); writeFromPicker();
+  announce(`Moved page ${fromN}`);
+}
+
+function updateCount(){
+  if(!pp) return;
+  const el = document.getElementById('ppCount');
+  if(pp.mode === 'order'){
+    el.textContent = `${pp.order.filter(o => o.on).length}/${pp.total} kept`;
+  }else{
+    const n = pp.sel.size;
+    el.textContent = pp.mode === 'remove'
+      ? `${n} to remove`
+      : (n ? `${n} selected` : `all ${pp.total}`);
+  }
+}
 
 /* ------------------------------------------------------------- theme --- */
 // Only UI preferences go in localStorage. No document data, ever.
@@ -391,6 +823,7 @@ function render(){
 
 /* ------------------------------------------------------- tool screen --- */
 function open_(key){
+  teardownPicker();
   current = TOOLS.find(t => t.key === key);
   files = [];
   document.getElementById('home').hidden = true;
@@ -406,6 +839,7 @@ function open_(key){
   picker.value = '';
 
   buildFields();
+  refreshOutputName();
   drawFiles();
   document.getElementById('result').className = 'result';
   const motion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -417,6 +851,7 @@ function open_(key){
 }
 
 function home(){
+  teardownPicker();
   const last = current && current.key;
   current = null; files = [];
   document.getElementById('home').hidden = false;
@@ -463,6 +898,11 @@ function buildFields(){
       el.id = id;
       if(f.placeholder) el.placeholder = f.placeholder;
       if(f.default !== undefined) el.value = f.default;
+      // The output-name field auto-fills from the file list until the user
+      // takes it over. Mark it "touched" on the first manual keystroke.
+      if(f.name === 'output_name'){
+        el.addEventListener('input', () => { el.dataset.touched = '1'; });
+      }
       d.append(el);
       if(f.help){
         const h = document.createElement('span');
@@ -495,7 +935,41 @@ function addFiles(list){
     // expects when they drop a second file onto e.g. Compress.
     if(!current.multi) files = [f]; else files.push(f);
   }
+  refreshOutputName();
   drawFiles();
+}
+
+function isPdf(f){ return /\.pdf$/i.test(f.name) || f.type === 'application/pdf'; }
+
+// Move item from -> to in `files`, keeping the array the single source of truth.
+function moveFile(from, to){
+  if(to < 0 || to >= files.length || from === to) return;
+  const [it] = files.splice(from, 1);
+  files.splice(to, 0, it);
+  refreshOutputName();
+  drawFiles();
+}
+
+let dragFrom = null;
+
+// Smart default output name from the input stems, mirroring the server-side
+// fallback in tools.py so the field just previews what the backend would pick.
+function smartOutputName(){
+  const stems = files.map(f => f.name.replace(/\.[^.]+$/, '').trim()).filter(Boolean);
+  if(!stems.length) return '';
+  if(stems.length === 1) return stems[0];
+  if(stems.length === 2) return `${stems[0]}+${stems[1]}`;
+  return `${stems[0]}+${stems.length - 1}-more`;
+}
+
+// Keep the output-name field in step with the file list until the user types
+// their own value (dataset.touched), after which we never clobber it.
+function refreshOutputName(){
+  const el = document.getElementById('f_output_name');
+  if(!el) return;
+  const def = smartOutputName();
+  el.placeholder = def || 'output name';
+  if(el.dataset.touched !== '1') el.value = def;
 }
 
 function drawFiles(){
@@ -503,30 +977,73 @@ function drawFiles(){
   ul.innerHTML = '';
   files.forEach((f, i) => {
     const li = document.createElement('li');
-    li.innerHTML = `${current.multi ? '<button class="mv" type="button"><span aria-hidden="true">↑</span></button>' : ''}
+    if(current.multi) li.classList.add('reorder');
+    li.innerHTML = `
+      ${current.multi ? '<span class="grip" aria-hidden="true">⋮⋮</span>' : ''}
+      <span class="thumb" aria-hidden="true">📄</span>
+      ${current.multi ? '<button class="mv" type="button"><span aria-hidden="true">↑</span></button>' : ''}
       <span class="nm"></span><span class="sz"></span>
       <button type="button" class="rm"><span aria-hidden="true">✕</span></button>`;
     li.querySelector('.nm').textContent = `${i + 1}. ${f.name}`;
     li.querySelector('.sz').textContent = fmt(f.size);
+
+    // Thumbnail: render the first page for PDFs, leave the icon otherwise.
+    if(isPdf(f)) previewPdf(f, li.querySelector('.thumb'));
+
     const rm = li.querySelector('.rm');
     rm.setAttribute('aria-label', `Remove ${f.name}`);
     rm.onclick = () => {
-      files.splice(i, 1); drawFiles();
+      files.splice(i, 1); refreshOutputName(); drawFiles();
       announce(`Removed ${f.name}`);
       // Focus would be destroyed with the row; put it somewhere sensible.
       (document.querySelector('#fileList .rm') || document.getElementById('drop')).focus();
     };
+
     const mv = li.querySelector('.mv');
     if(mv){
       mv.setAttribute('aria-label', `Move ${f.name} earlier`);
       mv.disabled = i === 0;
       mv.onclick = () => {
-        [files[i - 1], files[i]] = [files[i], files[i - 1]];
-        drawFiles();
+        moveFile(i, i - 1);
         announce(`${f.name} moved to position ${i}`);
         const rows = document.querySelectorAll('#fileList .mv');
         if(rows[i - 1]) rows[i - 1].focus();
       };
+    }
+
+    // Pointer drag-to-reorder for multi-file tools. The keyboard ↑ button above
+    // stays as the accessible path; drag is an addition, not a replacement.
+    if(current.multi){
+      li.draggable = true;
+      li.addEventListener('dragstart', ev => {
+        dragFrom = i; li.classList.add('dragging');
+        ev.dataTransfer.effectAllowed = 'move';
+        // Firefox needs data set for a drag to start at all.
+        ev.dataTransfer.setData('text/plain', String(i));
+      });
+      li.addEventListener('dragend', () => {
+        dragFrom = null;
+        ul.querySelectorAll('li').forEach(el =>
+          el.classList.remove('dragging','dropbefore','dropafter'));
+      });
+      li.addEventListener('dragover', ev => {
+        ev.preventDefault();
+        if(dragFrom === null || dragFrom === i){ return; }
+        const before = ev.clientY < li.getBoundingClientRect().top + li.offsetHeight / 2;
+        li.classList.toggle('dropbefore', before);
+        li.classList.toggle('dropafter', !before);
+      });
+      li.addEventListener('dragleave', () =>
+        li.classList.remove('dropbefore','dropafter'));
+      li.addEventListener('drop', ev => {
+        ev.preventDefault();
+        if(dragFrom === null) return;
+        const before = ev.clientY < li.getBoundingClientRect().top + li.offsetHeight / 2;
+        let to = before ? i : i + 1;
+        if(dragFrom < to) to--;          // account for the removed source slot
+        moveFile(dragFrom, to);
+        announce(`Reordered to position ${to + 1}`);
+      });
     }
     ul.append(li);
   });
@@ -539,6 +1056,9 @@ function drawFiles(){
     : (need > 1 ? `Select at least ${need} files` : 'Select a file to begin');
   document.getElementById('fileStatus').textContent =
     files.length ? `${files.length} file${files.length === 1 ? '' : 's'} selected` : '';
+  // Show/rebuild the per-page picker for single-PDF page tools (async, fire and
+  // forget). It tears itself down when there is no eligible single file.
+  syncPagePicker();
 }
 
 function announce(msg){ document.getElementById('fileStatus').textContent = msg; }

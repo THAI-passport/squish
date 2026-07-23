@@ -11,6 +11,9 @@ FROM python:3.12-slim AS base
 ARG WITH_OFFICE=1
 ARG WITH_OCR=1
 ARG OCR_LANGS="eng fra deu spa por ita"
+# pdf.js version vendored for in-browser thumbnails. Kept in sync with the
+# comment in backend/static/vendor/README.md.
+ARG PDFJS_VER=3.11.174
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -54,6 +57,18 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/app.py backend/tools.py ./
 COPY backend/static ./static
+
+# Vendor pdf.js at build time so the shipped image renders thumbnails with no
+# external request at runtime. curl is used ONLY here, during the build, and is
+# not part of the runtime image. If the download fails the build still succeeds
+# and the UI falls back to icons -- thumbnails are an enhancement, not a
+# dependency.
+RUN set -eux; \
+    apt-get update; apt-get install -y --no-install-recommends curl ca-certificates; \
+    base="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VER}"; \
+    curl -fsSL "$base/pdf.min.js"        -o static/vendor/pdf.min.js || echo "pdf.js fetch failed; thumbnails will fall back to icons"; \
+    curl -fsSL "$base/pdf.worker.min.js" -o static/vendor/pdf.worker.min.js || true; \
+    apt-get purge -y curl; apt-get autoremove -y; rm -rf /var/lib/apt/lists/*
 
 # Non-root, and no writable home: everything transient goes to /tmp, which is
 # an emptyDir on Kubernetes so readOnlyRootFilesystem still works.
