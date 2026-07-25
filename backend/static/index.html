@@ -832,7 +832,8 @@ function open_(key){
   document.getElementById('tName').textContent = current.name;
   document.getElementById('tBlurb').textContent = current.blurb;
   document.getElementById('dropHint').textContent =
-    `${current.multi ? 'One or more' : 'One'} file · ${current.accept.replaceAll(',', ' ')} · up to ${LIMITS.max_upload_mb} MB`;
+    `${current.min_files === 0 ? 'Optional file' : (current.multi ? 'One or more' : 'One')} file · ${current.accept.replaceAll(',', ' ')} · up to ${LIMITS.max_upload_mb} MB`
+      .replace('Optional file file', 'Optional file');
 
   const picker = document.getElementById('picker');
   picker.accept = current.accept;
@@ -903,6 +904,11 @@ function buildFields(){
       // takes it over. Mark it "touched" on the first manual keystroke.
       if(f.name === 'output_name'){
         el.addEventListener('input', () => { el.dataset.touched = '1'; });
+      }
+      // A pasted-text tool (md-to-pdf) becomes runnable as soon as the text box
+      // has content, even with no file uploaded.
+      if(f.name === 'md_text'){
+        el.addEventListener('input', () => updateGo());
       }
       d.append(el);
       if(f.help){
@@ -1048,18 +1054,32 @@ function drawFiles(){
     }
     ul.append(li);
   });
-  const go = document.getElementById('go');
-  const need = current.min_files;
-  const ready = files.length >= need;
-  go.disabled = !ready;
-  go.textContent = ready
-    ? `Run ${current.name}`
-    : (need > 1 ? `Select at least ${need} files` : 'Select a file to begin');
   document.getElementById('fileStatus').textContent =
     files.length ? `${files.length} file${files.length === 1 ? '' : 's'} selected` : '';
+  updateGo();
   // Show/rebuild the per-page picker for single-PDF page tools (async, fire and
   // forget). It tears itself down when there is no eligible single file.
   syncPagePicker();
+}
+
+// Enable the run button when the tool has enough input. Most tools need
+// min_files uploads; a min_files===0 tool (md-to-pdf) can instead run from
+// pasted text, so it's ready with either a file or a non-empty text field.
+function updateGo(){
+  const go = document.getElementById('go');
+  const need = current.min_files;
+  const textEl = document.getElementById('f_md_text');
+  const hasText = !!(textEl && textEl.value.trim());
+  let ready, notReady;
+  if(need > 0){
+    ready = files.length >= need;
+    notReady = need > 1 ? `Select at least ${need} files` : 'Select a file to begin';
+  }else{
+    ready = files.length > 0 || hasText;
+    notReady = 'Add a file or paste text';
+  }
+  go.disabled = !ready;
+  go.textContent = ready ? `Run ${current.name}` : notReady;
 }
 
 function announce(msg){ document.getElementById('fileStatus').textContent = msg; }
@@ -1071,7 +1091,11 @@ const fmt = b => b < 1024 ? b + ' B'
 /* ------------------------------------------------------------ submit --- */
 let busy = false;
 async function submit(){
-  if(busy || !files.length) return;
+  // A min_files===0 tool (md-to-pdf) may legitimately run with no file, from
+  // pasted text; gate on the same readiness the run button uses.
+  const noInput = current.min_files > 0 ? !files.length
+    : (!files.length && !(document.getElementById('f_md_text') || {}).value?.trim());
+  if(busy || noInput) return;
   busy = true;
   const go = document.getElementById('go');
   const bar = document.getElementById('bar');

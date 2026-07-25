@@ -47,7 +47,7 @@ log = logging.getLogger("uvicorn.error")
 
 APP_TITLE = "Squish"
 # run-local.sh greps for the "-squish" marker to prove new code is running.
-APP_VERSION = "1.3.0-squish"
+APP_VERSION = "1.4.1-squish"
 
 # ---------------------------------------------------------------- config ---
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "200"))
@@ -269,7 +269,10 @@ async def run_tool(key: str, request: Request):
 
     form = await parse_form(request)
     uploads = [v for v in form.getlist("files") if isinstance(v, UploadFile)]
-    if not uploads:
+    # min_files == 0 marks a tool that can run without an upload (e.g. md-to-pdf
+    # from pasted text); it validates its own inputs. Every other tool still
+    # needs at least one file.
+    if not uploads and tool.min_files > 0:
         raise HTTPException(400, "no files uploaded")
     if len(uploads) < tool.min_files:
         raise HTTPException(400, f"{tool.name} needs at least {tool.min_files} files")

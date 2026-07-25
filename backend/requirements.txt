@@ -12,5 +12,11 @@ pdf2docx>=0.5.8
 openpyxl>=3.1
 python-pptx>=0.6.23
 
+# Markdown -> PDF. WeasyPrint is a real CSS print engine (needs Pango system
+# libs, installed in the Dockerfile). Pygments powers fenced-code highlighting.
+Markdown>=3.5
+weasyprint>=60
+Pygments>=2.17
+
 # Security
 pyhanko>=0.21.0

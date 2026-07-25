@@ -528,3 +528,61 @@ def test_pdf_to_text_extracts_the_layer(work, pdf):
     r = T.pdf_to_text(work, [pdf], {})
     assert r.filename.endswith(".txt")
     assert r.path.read_text()
+
+
+# ---------------------------------------------------------- markdown->pdf ---
+try:
+    import weasyprint as _weasy  # noqa: F401
+    import markdown as _md       # noqa: F401
+    _HAS_WEASY = True
+except Exception:
+    _HAS_WEASY = False
+
+needs_weasy = pytest.mark.skipif(not _HAS_WEASY, reason="weasyprint/markdown not installed")
+
+
+@needs_weasy
+def test_md_to_pdf_renders_a_table(work):
+    src = work / "doc.md"
+    src.write_text(
+        "# Title\n\n"
+        "| Name | Qty |\n|------|-----|\n| Apples | 3 |\n| Pears | 12 |\n\n"
+        "Some **bold** text and `code`.\n",
+        encoding="utf-8")
+    r = T.md_to_pdf(work, [src], {"page_size": "a4"})
+    assert r.filename.endswith(".pdf")
+    txt = text_of(r.path)
+    # Table cells and heading must survive into the PDF text layer.
+    assert "Apples" in txt and "Pears" in txt and "Title" in txt
+
+
+@needs_weasy
+def test_md_to_pdf_blocks_local_file_access(work):
+    # A document must not be able to read the server filesystem.
+    src = work / "evil.md"
+    src.write_text('![x](file:///etc/passwd)\n', encoding="utf-8")
+    # Rendering should not raise (the fetch is refused, image just omitted).
+    r = T.md_to_pdf(work, [src], {})
+    assert r.path.exists()
+
+
+@needs_weasy
+def test_md_to_pdf_blocks_remote_by_default(work):
+    from pathlib import Path
+    fetch = T._weasy_url_fetcher(Path(work), allow_remote=False)
+    with pytest.raises(ValueError, match="remote resources are disabled"):
+        fetch("https://example.com/logo.png")
+
+
+@needs_weasy
+def test_md_to_pdf_from_pasted_text(work):
+    r = T.md_to_pdf(work, [], {"md_text": "# Pasted\n\nHello **world**.",
+                               "title": "note"})
+    assert r.filename == "note.pdf"
+    assert "Pasted" in text_of(r.path)
+
+
+def test_md_to_pdf_requires_some_input(work):
+    # No file and no text -> a clear error, regardless of weasyprint presence.
+    with pytest.raises(T.ToolError):
+        T.md_to_pdf(work, [], {})

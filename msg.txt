@@ -1,0 +1,49 @@
+feat: Markdown to PDF (WeasyPrint) with paste-or-upload input
+
+Add a high-fidelity Markdown-to-PDF tool and a full third-party license
+inventory. Markdown -> HTML (python-markdown) -> WeasyPrint, a real CSS print
+engine, so tables, code, and page breaks survive intact.
+
+md-to-pdf tool (tools.py)
+- python-markdown (extra + codehilite + toc + admonition) to HTML, rendered by
+  WeasyPrint with a GitHub-flavored print stylesheet.
+- Fidelity comes from the print CSS: thead repeats table headers across page
+  breaks, tr/pre/figure use break-inside: avoid, code wraps instead of
+  overflowing, and @page honors A4/Letter size and margins. Pygments supplies
+  fenced-code colors.
+- Options: page size, margin, title, and "Allow remote images" (off by
+  default).
+- Accepts a .md upload OR pasted Markdown text (see below).
+
+Input from pasted text (no upload required)
+- Tools may now declare min_files=0, meaning they validate their own input;
+  run_tool skips the "no files uploaded" guard for them. md_to_pdf uses the
+  uploaded file if present, else the md_text field, else errors.
+- UI: factor the run-button gate into updateGo() (ready = enough files, or a
+  file/non-empty text for min_files=0 tools); the text box re-checks on input;
+  submit() and the drop hint account for the optional file. md-to-pdf is the
+  first tool that runs without an upload.
+
+Security
+- WeasyPrint's url_fetcher is locked down: data: URIs only, file:// and all
+  local paths refused (no server filesystem reads), and https allowed only with
+  the opt-in and only to public IPs (private/loopback/link-local rejected) to
+  blunt SSRF.
+
+Dependencies
+- requirements.txt: Markdown, weasyprint, Pygments.
+- Dockerfile: Pango system libs (libpango-1.0-0, libpangoft2-1.0-0,
+  libjpeg62-turbo, libffi8).
+
+Licensing
+- Add THIRD_PARTY_NOTICES.md: every Python package, system engine, and vendored
+  asset with its license, copyright, and URL, plus MIT/BSD license texts.
+  Verified this pass: WeasyPrint BSD-3, pdf2docx now MIT (was AGPL), qpdf
+  Apache-2.0, OCRmyPDF MPL-2.0, pngquant GPLv3. Project stays AGPL-3.0.
+
+Tests
+- md-to-pdf: table fidelity, pasted-text render, requires-some-input, local
+  file blocked, remote blocked by default; API test that a text-only request
+  clears the upload guard. WeasyPrint-dependent tests skip if it is absent.
+
+Bump APP_VERSION to 1.4.1-squish (38 tools).

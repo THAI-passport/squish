@@ -24,10 +24,10 @@ kubectl apply -f k8s/squish.yaml
 |---|---|
 | Organize (7) | merge, split (ranges / burst / chunks), split at bookmarks, remove pages, reorder, rotate, N-up |
 | Optimize (4) | compress, grayscale, repair, OCR |
-| Convert to PDF (2) | image to PDF, Office to PDF |
-| Convert from PDF (8) | image, Word, Excel, PowerPoint, PDF/A, Markdown, extract images, extract attachments |
+| Convert to PDF (3) | image to PDF, Office to PDF, **Markdown to PDF** |
+| Convert from PDF (10) | image, Word, Excel, PowerPoint, PDF/A, Markdown, text, extract images, extract fonts, extract attachments |
 | Edit (6) | watermark, page numbers, header/footer, crop, flatten, metadata |
-| Security (5) | protect, unlock, redact, rasterise, compare |
+| Security (8) | protect, unlock, redact, auto-redact, rasterise, sign, verify signature, compare |
 
 The UI is a single HTML file with no build step, no CDN and no external
 requests. The tool grid, the option inputs and the client-side validation are
@@ -144,6 +144,26 @@ want and restart; the badges clear on the next health check.
 
 All five are free and open-source. Everything else — merge, split, rotate,
 watermark, redact, the rest — is pure PyMuPDF and needs no external binary.
+
+## Markdown to PDF
+
+Rendered with **WeasyPrint**, a real CSS print engine — not a lossy converter.
+Markdown becomes HTML (python-markdown: GitHub tables, fenced code with syntax
+highlighting, footnotes, definition lists, admonitions) and WeasyPrint paints
+the PDF. The print CSS is what keeps it faithful: table headers repeat across
+page breaks, rows and code blocks don't split mid-element, long code wraps
+instead of overflowing, and page size (A4/Letter) plus margins are honoured.
+
+WeasyPrint is a Python package but needs Pango system libraries; the Dockerfile
+installs them (`libpango-1.0-0`, `libpangoft2-1.0-0`, `libjpeg62-turbo`). For a
+native run, install them with your package manager (`apt install libpango-1.0-0
+libpangoft2-1.0-0` / `brew install pango`).
+
+**Security:** a Markdown document can reference external resources, so the
+renderer's fetcher is locked down — `file://` and all local paths are refused
+(a document can't read the server's filesystem), and remote `https` images are
+**off by default**. The "Allow remote images" option enables them but still
+rejects private, loopback and link-local addresses to blunt SSRF.
 
 ## Thumbnails (pdf.js)
 
@@ -361,4 +381,6 @@ PyMuPDF licence from Artifex, or a swap to pikepdf (MPL-2.0) plus pypdfium2
 applier.
 
 Bundled engines carry their own licences: Ghostscript (AGPL), qpdf
-(Apache-2.0), LibreOffice (MPL-2.0), tesseract (Apache-2.0).
+(Apache-2.0), LibreOffice (MPL-2.0), tesseract (Apache-2.0). WeasyPrint,
+Python-Markdown and Pygments are BSD; pyHanko is MIT. A full dependency and
+license inventory is in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

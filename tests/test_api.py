@@ -278,3 +278,11 @@ def test_repair_is_exempt_from_the_magic_gate(client):
     r = client.post("/api/t/repair",
                     files={"files": ("broken.pdf", b"garbage without a header", "application/pdf")})
     assert "does not appear to be a valid PDF" not in r.json().get("detail", "")
+
+
+def test_text_only_tool_accepts_no_file(client):
+    # md-to-pdf has min_files=0; a request with only pasted text must pass the
+    # upload guard (it may still 400 later if weasyprint is absent, but NOT with
+    # "no files uploaded").
+    r = client.post("/api/t/md-to-pdf", data={"md_text": "# Hi\n\ntext"})
+    assert "no files uploaded" not in r.json().get("detail", "")

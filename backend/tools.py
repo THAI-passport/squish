@@ -599,6 +599,152 @@ def office_to_pdf(work: Path, inputs: list[Path], p: dict) -> Result:
     return Result(dest, ZIP, "converted.zip")
 
 
+# Markdown extensions chosen for fidelity: GitHub-style tables, fenced code
+# with syntax highlighting, footnotes, definition lists, task lists, a TOC
+# anchor, and raw HTML passthrough. `extra` already bundles tables, fenced_code,
+# footnotes, attr_list, def_list and abbr.
+MD_EXTENSIONS = [
+    "extra", "codehilite", "sane_lists", "toc", "admonition",
+]
+
+# GitHub-flavoured print stylesheet. The print-specific rules are what make the
+# output faithful rather than merely styled:
+#   * @page sets a real paper size and margins
+#   * thead { display: table-header-group } repeats table headers across page
+#     breaks -- the single most common "lost table" failure
+#   * tr / pre / figure avoid being split mid-element
+#   * pre wraps instead of overflowing the page width
+MD_CSS = """
+@page { size: %(page)s; margin: %(margin)smm; }
+* { box-sizing: border-box; }
+body { font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+       "DejaVu Sans", sans-serif; font-size: 11pt; line-height: 1.55;
+       color: #1f2328; }
+h1,h2,h3,h4,h5,h6 { font-weight: 600; line-height: 1.25; margin: 1.2em 0 .5em;
+       break-after: avoid; }
+h1 { font-size: 2em; border-bottom: 1px solid #d1d9e0; padding-bottom: .3em; }
+h2 { font-size: 1.5em; border-bottom: 1px solid #d1d9e0; padding-bottom: .3em; }
+h3 { font-size: 1.25em; } h4 { font-size: 1em; }
+p, ul, ol, blockquote, table, pre { margin: 0 0 1em; }
+a { color: #0969da; text-decoration: none; }
+code { font-family: "DejaVu Sans Mono", ui-monospace, SFMono-Regular, Menlo,
+       Consolas, monospace; font-size: .88em;
+       background: #eff1f3; padding: .15em .35em; border-radius: 4px; }
+pre { background: #f6f8fa; padding: 12px 14px; border-radius: 6px;
+      overflow-wrap: anywhere; white-space: pre-wrap; break-inside: avoid; }
+pre code { background: none; padding: 0; }
+blockquote { color: #59636e; border-left: .25em solid #d1d9e0; padding: 0 1em;
+      margin-left: 0; }
+img { max-width: 100%%; }
+figure, tr { break-inside: avoid; }
+table { border-collapse: collapse; width: 100%%; font-size: .95em; }
+thead { display: table-header-group; }
+th, td { border: 1px solid #d1d9e0; padding: 6px 13px; text-align: left;
+      vertical-align: top; }
+th { background: #f6f8fa; font-weight: 600; }
+tbody tr:nth-child(even) { background: #f6f8fa; }
+hr { border: 0; border-top: 1px solid #d1d9e0; margin: 1.5em 0; }
+"""
+
+
+def _weasy_url_fetcher(work: Path, allow_remote: bool):
+    """Restrict what a Markdown document can pull in when rendered.
+
+    WeasyPrint would otherwise happily fetch `file:///etc/passwd` or
+    `http://169.254.169.254/` (cloud metadata) referenced by a hostile
+    document. So: allow `data:` URIs always; block local files entirely (a
+    single-file upload has no legitimate local assets); and permit http(s) only
+    when the user opts in, and even then reject private/loopback/link-local
+    addresses to blunt SSRF. This is imperfect against DNS-rebinding -- the
+    default posture (remote OFF) is the safe one.
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+    from weasyprint import default_url_fetcher
+
+    def fetch(url: str, *args, **kwargs):
+        if url.startswith("data:"):
+            return default_url_fetcher(url, *args, **kwargs)
+        scheme = urlparse(url).scheme
+        if scheme in ("http", "https"):
+            if not allow_remote:
+                raise ValueError("remote resources are disabled for this document")
+            host = urlparse(url).hostname or ""
+            for info in socket.getaddrinfo(host, None):
+                ip = ipaddress.ip_address(info[4][0])
+                if (ip.is_private or ip.is_loopback or ip.is_link_local
+                        or ip.is_reserved or ip.is_multicast):
+                    raise ValueError(f"blocked non-public address for {host}")
+            return default_url_fetcher(url, *args, **kwargs)
+        # file:// and anything else: refused, so a document cannot read the
+        # server's filesystem.
+        raise ValueError(f"blocked resource scheme: {scheme or 'file'}")
+
+    return fetch
+
+
+def md_to_pdf(work: Path, inputs: list[Path], p: dict) -> Result:
+    """Render a Markdown file to PDF via HTML + WeasyPrint.
+
+    Fidelity comes from a real CSS print engine, not a lossy converter: tables
+    keep their borders and repeat their header row across page breaks, fenced
+    code is syntax-highlighted and wraps instead of overflowing, and page size
+    and margins are honoured.
+    """
+    try:
+        import markdown
+        from weasyprint import HTML
+        from pygments.formatters import HtmlFormatter
+    except ImportError as exc:
+        raise ToolError(f"Markdown to PDF needs weasyprint, markdown and pygments "
+                        f"({exc.name} is missing)")
+
+    # Input is either an uploaded file (wins if present) or pasted Markdown from
+    # the text box. The tool is registered with min_files=0, so app.py allows a
+    # request with no upload -- validate our own input here.
+    if inputs:
+        src = inputs[0]
+        try:
+            text = src.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            text = src.read_text(encoding="utf-8", errors="replace")
+        base = stem(src)
+    else:
+        text = str(p.get("md_text") or "")
+        if not text.strip():
+            raise ToolError("upload a .md file or paste some Markdown to convert")
+        base = safe_component(p.get("title") or "document")
+
+    page = "Letter" if str(p.get("page_size", "a4")).lower() == "letter" else "A4"
+    try:
+        margin = max(0, min(50, int(float(p.get("margin", 18)))))
+    except (TypeError, ValueError):
+        margin = 18
+    allow_remote = bool(p.get("allow_remote"))
+
+    body_html = markdown.markdown(
+        text, extensions=MD_EXTENSIONS, output_format="html5")
+    # Pygments emits its own classes under .codehilite; pull the matching colours.
+    pygments_css = HtmlFormatter().get_style_defs(".codehilite")
+    css = (MD_CSS % {"page": page, "margin": margin}) + "\n" + pygments_css
+
+    title = safe_component(p.get("title") or base)
+    doc_html = (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        f"<title>{title}</title><style>{css}</style></head>"
+        f"<body>{body_html}</body></html>"
+    )
+
+    dest = work / f"{base}.pdf"
+    try:
+        HTML(string=doc_html, base_url=str(work),
+             url_fetcher=_weasy_url_fetcher(work, allow_remote)).write_pdf(dest)
+    except Exception as exc:
+        raise ToolError(f"rendering failed: {exc}")
+    return Result(dest, PDF, f"{base}.pdf")
+
+
 def pdf_to_word(work: Path, inputs: list[Path], p: dict) -> Result:
     """Reconstructs paragraphs, tables and images. Complex layouts drift."""
     from pdf2docx import Converter
@@ -1470,6 +1616,22 @@ TOOLS: list[Tool] = [
     Tool("office-to-pdf", "Office to PDF", "Convert to PDF",
          "Word, Excel and PowerPoint files rendered to PDF by LibreOffice.",
          office_to_pdf, accept=",".join(sorted(OFFICE_EXT)), multi=True),
+    Tool("md-to-pdf", "Markdown to PDF", "Convert to PDF",
+         "Render Markdown to PDF with faithful tables, code and page breaks. "
+         "Upload a .md file or paste text below.",
+         md_to_pdf, accept=".md,.markdown,.mdown,.txt", min_files=0, fields=[
+             F("md_text", "textarea", "Markdown text",
+               placeholder="# Title\n\nPaste or type Markdown here. Used only "
+                           "when no file is uploaded."),
+             F("page_size", "select", "Page size",
+               options=[["a4", "A4"], ["letter", "US Letter"]], default="a4"),
+             F("margin", "number", "Margin (mm)", default=18, min=0, max=50),
+             F("title", "text", "Document title",
+               help="Defaults to the file name."),
+             F("allow_remote", "checkbox", "Allow remote images",
+               help="Off by default. Fetches https images referenced in the "
+                    "document; private/loopback addresses stay blocked."),
+         ]),
     Tool("pdf-to-jpg", "PDF to image", "Convert from PDF",
          "Render each page as a JPG or PNG at the resolution you choose.",
          pdf_to_jpg, fields=[
@@ -1604,7 +1766,7 @@ TOOLS: list[Tool] = [
              PAGES,
          ]),
     Tool("auto-redact", "Auto-redact", "Security",
-         "Automatically black out emails, phone numbers, SSNs, or credit cards.",
+         "Automatically black out emails, phone numbers, SSNs, or credit cards. WARNING: Best-effort only; always verify output as layout issues can cause misses.",
          auto_redact, fields=[
              F("redact_email", "checkbox", "Redact Emails"),
              F("redact_ssn", "checkbox", "Redact SSNs"),
