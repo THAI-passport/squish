@@ -1,11 +1,15 @@
-"""Squish PDF tool implementations.
+
+// Auto-generated client_tools.js for static WASM fallback
+const STATIC_TOOLS = [{"key":"merge","name":"Merge PDF","group":"Organize","blurb":"Combine several PDFs into one, in the order you arrange them.","accept":".pdf","multi":true,"min_files":2,"fields":[{"name":"output_name","kind":"text","label":"Output name","placeholder":"merged","help":"Auto-filled from your files; edit if you like. The .pdf extension is added automatically."}],"available":true,"needs":""},{"key":"split","name":"Split PDF","group":"Organize","blurb":"Pull out a range, or burst the file into separate documents.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"mode","kind":"select","label":"Mode","options":[["ranges","Extract selected pages into one PDF"],["every","One PDF per page"],["chunks","Fixed-size groups"]],"default":"ranges"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"},{"name":"size","kind":"number","label":"Pages per group","default":2,"min":1,"max":500}],"available":true,"needs":""},{"key":"remove-pages","name":"Remove pages","group":"Organize","blurb":"Delete the pages you name and keep everything else.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"Pages to remove","placeholder":"e.g. 2 or 4-6","help":"The pages to delete.","picker":"remove"}],"available":true,"needs":""},{"key":"organize","name":"Reorder pages","group":"Organize","blurb":"Rebuild the document in an explicit page order.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"New order","placeholder":"3,1,2,4-","help":"Pages appear in exactly this order.","picker":"order"}],"available":true,"needs":""},{"key":"rotate","name":"Rotate PDF","group":"Organize","blurb":"Turn pages a quarter, half or three-quarter turn.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"angle","kind":"select","label":"Rotation","options":[["90","90 clockwise"],["180","180"],["270","90 counter-clockwise"]],"default":"90"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"split-bookmarks","name":"Split at bookmarks","group":"Organize","blurb":"Break a long document into sections using its own outline.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"level","kind":"select","label":"Split at","options":[["1","Top-level bookmarks only"],["2","Level 2 and above"],["3","Level 3 and above"]],"default":"1"}],"available":true,"needs":""},{"key":"n-up","name":"N-up / booklet","group":"Organize","blurb":"Print two or four pages per sheet to save paper.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"per_sheet","kind":"select","label":"Pages per sheet","options":[["2","2 up"],["4","4 up"]],"default":"2"},{"name":"gap","kind":"number","label":"Gap (pt)","default":8,"min":0,"max":72},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"compress","name":"Compress PDF","group":"Optimize","blurb":"Shrink the file by downsampling images and deduplicating resources.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"level","kind":"select","label":"Compression","options":[["low","Less compression, best quality"],["recommended","Recommended"],["extreme","Extreme, smallest file"]],"default":"recommended"}],"available":false,"needs":"backend binary"},{"key":"repair","name":"Repair PDF","group":"Optimize","blurb":"Rebuild a damaged cross-reference table and recover what is readable.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":false,"needs":"backend binary"},{"key":"grayscale","name":"Grayscale PDF","group":"Optimize","blurb":"Strip colour for cheaper printing, usually a big size win too.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":true,"needs":""},{"key":"ocr","name":"OCR PDF","group":"Optimize","blurb":"Add a searchable, selectable text layer to a scan.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"lang","kind":"select","label":"Language","options":[["eng","English"],["fra","French"],["deu","German"],["spa","Spanish"],["por","Portuguese"],["ita","Italian"]],"default":"eng"},{"name":"deskew","kind":"checkbox","label":"Straighten crooked scans"},{"name":"force","kind":"checkbox","label":"Re-OCR pages that already have text"}],"available":false,"needs":"backend binary"},{"key":"jpg-to-pdf","name":"Image to PDF","group":"Convert to PDF","blurb":"Turn JPG, PNG or WEBP images into a PDF, one image per page.","accept":".jpg,.jpeg,.png,.webp,.bmp,.tif,.tiff","multi":true,"min_files":1,"fields":[{"name":"size","kind":"select","label":"Page size","options":[["fit","Fit to each image"],["a4","A4"],["letter","US Letter"]],"default":"fit"},{"name":"margin","kind":"number","label":"Margin (pt)","default":0,"min":0,"max":200}],"available":true,"needs":""},{"key":"office-to-pdf","name":"Office to PDF","group":"Convert to PDF","blurb":"Word, Excel and PowerPoint files rendered to PDF by LibreOffice.","accept":".csv,.doc,.docx,.odp,.ods,.odt,.ppt,.pptx,.rtf,.txt,.xls,.xlsx","multi":true,"min_files":1,"fields":null,"available":false,"needs":"backend binary"},{"key":"md-to-pdf","name":"Markdown to PDF","group":"Convert to PDF","blurb":"Render Markdown to PDF with faithful tables, code and page breaks. Upload a .md file or paste text below.","accept":".md,.markdown,.mdown,.txt","multi":false,"min_files":0,"fields":[{"name":"md_text","kind":"textarea","label":"Markdown text","placeholder":"# Title\n\nPaste or type Markdown here. Used only when no file is uploaded."},{"name":"page_size","kind":"select","label":"Page size","options":[["a4","A4"],["letter","US Letter"]],"default":"a4"},{"name":"margin","kind":"number","label":"Margin (mm)","default":18,"min":0,"max":50},{"name":"title","kind":"text","label":"Document title","help":"Defaults to the file name."},{"name":"allow_remote","kind":"checkbox","label":"Allow remote images","help":"Off by default. Fetches https images referenced in the document; private/loopback addresses stay blocked."}],"available":true,"needs":""},{"key":"pdf-to-jpg","name":"PDF to image","group":"Convert from PDF","blurb":"Render each page as a JPG or PNG at the resolution you choose.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"format","kind":"select","label":"Format","options":[["jpg","JPG"],["png","PNG"]],"default":"jpg"},{"name":"dpi","kind":"number","label":"Resolution (DPI)","default":150,"min":36,"max":600},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"pdf-to-word","name":"PDF to Word","group":"Convert from PDF","blurb":"Rebuild paragraphs, tables and images as an editable .docx.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":false,"needs":"backend binary"},{"key":"pdf-to-excel","name":"PDF to Excel","group":"Convert from PDF","blurb":"Extract detected tables into a worksheet each.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"pdf-to-powerpoint","name":"PDF to PowerPoint","group":"Convert from PDF","blurb":"One slide per page, rendered full bleed.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"dpi","kind":"number","label":"Resolution (DPI)","default":150,"min":72,"max":300},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"pdf-to-pdfa","name":"PDF to PDF/A","group":"Convert from PDF","blurb":"Convert to the PDF/A-2b archival standard.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":false,"needs":"backend binary"},{"key":"pdf-to-markdown","name":"PDF to Markdown","group":"Convert from PDF","blurb":"Extract the text layer as Markdown, page by page.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"pdf-to-text","name":"PDF to Text","group":"Convert from PDF","blurb":"Extract the raw text layer as a .txt file.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"extract-images","name":"Extract images","group":"Convert from PDF","blurb":"Recover embedded images at their original resolution.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"min_size","kind":"number","label":"Ignore images smaller than (px)","default":64,"min":0,"max":4000,"help":"Filters out rules, bullets and spacer pixels."},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"extract-attachments","name":"Extract attachments","group":"Convert from PDF","blurb":"Pull out files embedded inside the PDF.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":true,"needs":""},{"key":"extract-fonts","name":"Extract fonts","group":"Convert from PDF","blurb":"Recover embedded font files.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"watermark","name":"Add watermark","group":"Edit","blurb":"Stamp text across the page, once or tiled.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"text","kind":"text","label":"Watermark text","placeholder":"CONFIDENTIAL","required":true},{"name":"mode","kind":"select","label":"Layout","options":[["single","Once per page"],["tile","Tiled"]],"default":"single"},{"name":"position","kind":"select","label":"Position","options":[["top-left","top left"],["top","top"],["top-right","top right"],["left","left"],["center","center"],["right","right"],["bottom-left","bottom left"],["bottom","bottom"],["bottom-right","bottom right"]],"default":"center"},{"name":"size","kind":"number","label":"Font size","default":42,"min":6,"max":200},{"name":"opacity","kind":"number","label":"Opacity","default":0.25,"min":0.05,"max":1,"step":0.05},{"name":"angle","kind":"number","label":"Angle","default":45,"min":-180,"max":180},{"name":"color","kind":"color","label":"Colour","default":"#7c5cff"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"page-numbers","name":"Add page numbers","group":"Edit","blurb":"Number the pages, with your own format and placement.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"format","kind":"text","label":"Format","default":"{n}","help":"{n} is the number, {total} the count. e.g. Page {n} of {total}"},{"name":"position","kind":"select","label":"Position","options":[["top-left","top left"],["top","top"],["top-right","top right"],["left","left"],["center","center"],["right","right"],["bottom-left","bottom left"],["bottom","bottom"],["bottom-right","bottom right"]],"default":"bottom"},{"name":"start","kind":"number","label":"Start at","default":1,"min":0,"max":99999},{"name":"size","kind":"number","label":"Font size","default":11,"min":6,"max":72},{"name":"color","kind":"color","label":"Colour","default":"#000000"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"crop","name":"Crop PDF","group":"Edit","blurb":"Trim margins off every page, measured in points.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"top","kind":"number","label":"Top (pt)","default":0,"min":0,"max":1000},{"name":"bottom","kind":"number","label":"Bottom (pt)","default":0,"min":0,"max":1000},{"name":"left","kind":"number","label":"Left (pt)","default":0,"min":0,"max":1000},{"name":"right","kind":"number","label":"Right (pt)","default":0,"min":0,"max":1000},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"header-footer","name":"Header / footer","group":"Edit","blurb":"Running text at the top or bottom, with date and filename tokens.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"text","kind":"text","label":"Text","required":true,"placeholder":"Draft \u2014 {date} \u2014 page {n} of {total}","help":"Tokens: {n} {total} {date} {filename}"},{"name":"position","kind":"select","label":"Position","options":[["top-left","top left"],["top","top"],["top-right","top right"],["left","left"],["center","center"],["right","right"],["bottom-left","bottom left"],["bottom","bottom"],["bottom-right","bottom right"]],"default":"top"},{"name":"size","kind":"number","label":"Font size","default":10,"min":6,"max":72},{"name":"color","kind":"color","label":"Colour","default":"#555555"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"flatten","name":"Flatten PDF","group":"Edit","blurb":"Bake annotations and form fields in so they can no longer be edited.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":true,"needs":""},{"key":"metadata","name":"Edit metadata","group":"Edit","blurb":"Change the title and author, or strip identifying metadata entirely.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"strip","kind":"checkbox","label":"Strip everything (ignores the fields below)"},{"name":"title","kind":"text","label":"Title"},{"name":"author","kind":"text","label":"Author"},{"name":"subject","kind":"text","label":"Subject"},{"name":"keywords","kind":"text","label":"Keywords"}],"available":true,"needs":""},{"key":"rasterise","name":"Rasterise PDF","group":"Security","blurb":"Rebuild every page as a flat image, destroying scripts and form fields.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"dpi","kind":"number","label":"Resolution (DPI)","default":150,"min":72,"max":400},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"protect","name":"Protect PDF","group":"Security","blurb":"Encrypt with AES-256 and set what readers are allowed to do.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"password_new","kind":"password","label":"New password","required":true},{"name":"allow_copy","kind":"checkbox","label":"Allow copying text"},{"name":"allow_modify","kind":"checkbox","label":"Allow editing and annotation"}],"available":true,"needs":""},{"key":"unlock","name":"Unlock PDF","group":"Security","blurb":"Strip encryption from a PDF whose password you know.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":true,"needs":""},{"key":"redact","name":"Redact PDF","group":"Security","blurb":"Permanently erase matching text -- not a black box drawn on top.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"terms","kind":"textarea","label":"Terms to redact","required":true,"placeholder":"one term per line"},{"name":"color","kind":"color","label":"Box colour","default":"#000000"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"auto-redact","name":"Auto-redact","group":"Security","blurb":"Automatically black out emails, phone numbers, SSNs, or credit cards. WARNING: Best-effort only; always verify output as layout issues can cause misses.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"redact_email","kind":"checkbox","label":"Redact Emails"},{"name":"redact_ssn","kind":"checkbox","label":"Redact SSNs"},{"name":"redact_phone","kind":"checkbox","label":"Redact Phone Numbers"},{"name":"redact_cc","kind":"checkbox","label":"Redact Credit Cards"},{"name":"color","kind":"color","label":"Box colour","default":"#000000"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"sign-pdf","name":"Sign PDF","group":"Security","blurb":"Digitally sign a PDF using your own .p12 or .pfx certificate.","accept":".pdf,.p12,.pfx","multi":true,"min_files":2,"fields":[{"name":"password_cert","kind":"password","label":"Certificate password","required":true}],"available":true,"needs":""},{"key":"verify-signature","name":"Verify Signature","group":"Security","blurb":"Check the validity of digital signatures on a PDF.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":true,"needs":""},{"key":"compare","name":"Compare PDFs","group":"Security","blurb":"Line-by-line diff of two documents' text.","accept":".pdf","multi":true,"min_files":2,"fields":null,"available":true,"needs":""}];
+
+const TOOLS_PY_SOURCE = `"""Squish PDF tool implementations.
 
 Every tool is a pure function over a temp working directory:
 
     fn(work: Path, inputs: list[Path], p: dict) -> Result
 
-It writes its output inside `work` and returns a Result describing the file to
-stream back. Nothing persists: app.py deletes `work` after the response is sent.
+It writes its output inside \`work\` and returns a Result describing the file to
+stream back. Nothing persists: app.py deletes \`work\` after the response is sent.
 
 Heavy lifting is delegated to battle-tested engines rather than reimplemented:
   PyMuPDF      page surgery, rendering, redaction, overlays
@@ -69,7 +73,7 @@ def run(cmd: list[str], cwd: Path | None = None, timeout: int = 300,
     Subprocess stderr is captured into the uvicorn logger rather than
     discarded -- silent engine failures are undebuggable in production.
 
-    `ok_codes` exists because qpdf exits 3 when it *successfully* recovered a
+    \`ok_codes\` exists because qpdf exits 3 when it *successfully* recovered a
     damaged file. Treating that as failure would make the repair tool reject
     exactly the documents it is meant to fix.
     """
@@ -115,14 +119,14 @@ def _wrap_limits(cmd: list[str]) -> tuple[list[str], Callable[[], None] | None]:
     child runs arbitrary Python between fork and exec while it may hold a lock
     another thread was using, which can deadlock the child forever.
 
-    util-linux `prlimit` sets the same RLIMITs from outside, with no code
+    util-linux \`prlimit\` sets the same RLIMITs from outside, with no code
     running in the forked child at all -- so prefer it wherever it exists,
     which is every Linux image this ships in. macOS has no prlimit, and native
-    `run-local.sh` is the case that matters there, so keep preexec_fn as the
+    \`run-local.sh\` is the case that matters there, so keep preexec_fn as the
     fallback: a small deadlock risk beats no memory ceiling at all.
 
     Windows has neither prlimit nor preexec_fn -- passing preexec_fn on Windows
-    raises ValueError -- and the `resource` module does not exist there, so the
+    raises ValueError -- and the \`resource\` module does not exist there, so the
     limits are simply unavailable. Return None; the engine still runs, just
     without an in-process memory ceiling (Docker is the recommended Windows
     path precisely because the container can cap memory instead).
@@ -137,7 +141,7 @@ def _wrap_limits(cmd: list[str]) -> tuple[list[str], Callable[[], None] | None]:
         if SUBPROC_CPU_SEC > 0:
             wrapped.append(f"--cpu={SUBPROC_CPU_SEC}")
         wrapped.append("--core=0")
-        # `--` keeps prlimit from eating flags that belong to the real command.
+        # \`--\` keeps prlimit from eating flags that belong to the real command.
         return wrapped + ["--"] + cmd, None
     if os.name != "posix":          # Windows: no prlimit, no preexec_fn
         return cmd, None
@@ -225,7 +229,7 @@ def parse_pages(spec: str, total: int) -> list[int]:
         chunk = chunk.strip()
         if not chunk:
             continue
-        m = re.fullmatch(r"(\d+)?\s*-\s*(\d+)?", chunk)
+        m = re.fullmatch(r"(\\d+)?\\s*-\\s*(\\d+)?", chunk)
         if m:
             # A dash with a number on at least one side is a real range. A bare
             # "-" carries no bound and is almost always a typo, not "everything";
@@ -252,7 +256,7 @@ def parse_pages(spec: str, total: int) -> list[int]:
 def zip_dir(files: list[Path], dest: Path) -> Path:
     """Zip by basename, de-duplicating collisions.
 
-    Two attachments both called `invoice.pdf` used to write the same archive
+    Two attachments both called \`invoice.pdf\` used to write the same archive
     name twice: most extractors keep only the last, so the user silently lost a
     file. Suffix repeats instead.
     """
@@ -271,7 +275,7 @@ def zip_dir(files: list[Path], dest: Path) -> Path:
 
 
 def stem(path: Path) -> str:
-    return re.sub(r"[^\w.\- ]+", "_", path.stem)[:80] or "document"
+    return re.sub(r"[^\\w.\\- ]+", "_", path.stem)[:80] or "document"
 
 
 def save(doc: fitz.Document, out: Path, shrink: bool = True) -> Path:
@@ -305,14 +309,14 @@ def merge_default_name(inputs: list[Path]) -> str:
 
 
 def output_pdf_name(raw: str, fallback: str) -> str:
-    """Sanitise a user-supplied output name into a safe `*.pdf` filename.
+    """Sanitise a user-supplied output name into a safe \`*.pdf\` filename.
 
     The name reaches Content-Disposition and the temp path, so it must not
     escape the directory or carry control characters -- reuse safe_component,
     which already strips traversal, then guarantee the extension.
     """
     name = safe_component(raw) if raw and raw.strip() else fallback
-    name = re.sub(r"\.pdf$", "", name, flags=re.IGNORECASE) or fallback
+    name = re.sub(r"\\.pdf\$", "", name, flags=re.IGNORECASE) or fallback
     return f"{name[:100]}.pdf"
 
 
@@ -572,7 +576,7 @@ def office_to_pdf(work: Path, inputs: list[Path], p: dict) -> Result:
     costs 3-5 seconds, so the image bakes a warm one at /opt/lo-profile and we
     copy that instead -- a few MB of file copy versus a full LibreOffice
     first-run. Falls back to cold creation if the template is absent (native
-    `run-local.sh`, or a custom image).
+    \`run-local.sh\`, or a custom image).
     """
     outs: list[Path] = []
     profile = work / "lo_profile"
@@ -601,7 +605,7 @@ def office_to_pdf(work: Path, inputs: list[Path], p: dict) -> Result:
 
 # Markdown extensions chosen for fidelity: GitHub-style tables, fenced code
 # with syntax highlighting, footnotes, definition lists, task lists, a TOC
-# anchor, and raw HTML passthrough. `extra` already bundles tables, fenced_code,
+# anchor, and raw HTML passthrough. \`extra\` already bundles tables, fenced_code,
 # footnotes, attr_list, def_list and abbr.
 MD_EXTENSIONS = [
     "extra", "codehilite", "sane_lists", "toc", "admonition",
@@ -650,9 +654,9 @@ hr { border: 0; border-top: 1px solid #d1d9e0; margin: 1.5em 0; }
 def _weasy_url_fetcher(work: Path, allow_remote: bool):
     """Restrict what a Markdown document can pull in when rendered.
 
-    WeasyPrint would otherwise happily fetch `file:///etc/passwd` or
-    `http://169.254.169.254/` (cloud metadata) referenced by a hostile
-    document. So: allow `data:` URIs always; block local files entirely (a
+    WeasyPrint would otherwise happily fetch \`file:///etc/passwd\` or
+    \`http://169.254.169.254/\` (cloud metadata) referenced by a hostile
+    document. So: allow \`data:\` URIs always; block local files entirely (a
     single-file upload has no legitimate local assets); and permit http(s) only
     when the user opts in, and even then reject private/loopback/link-local
     addresses to blunt SSRF. This is imperfect against DNS-rebinding -- the
@@ -728,7 +732,7 @@ def md_to_pdf(work: Path, inputs: list[Path], p: dict) -> Result:
         text, extensions=MD_EXTENSIONS, output_format="html5")
     # Pygments emits its own classes under .codehilite; pull the matching colours.
     pygments_css = HtmlFormatter().get_style_defs(".codehilite")
-    css = (MD_CSS % {"page": page, "margin": margin}) + "\n" + pygments_css
+    css = (MD_CSS % {"page": page, "margin": margin}) + "\\n" + pygments_css
 
     title = safe_component(p.get("title") or base)
     doc_html = (
@@ -863,12 +867,12 @@ def pdf_to_markdown(work: Path, inputs: list[Path], p: dict) -> Result:
     src = open_pdf(inputs[0], p.get("password", ""))
     lines: list[str] = []
     for pno in parse_pages(p.get("pages", ""), src.page_count):
-        lines.append(f"\n---\n\n<!-- page {pno + 1} -->\n")
+        lines.append(f"\\n---\\n\\n<!-- page {pno + 1} -->\\n")
         lines.append(src[pno].get_text("text").strip())
     src.close()
     base = stem(inputs[0])
     dest = work / f"{base}.md"
-    dest.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+    dest.write_text("\\n".join(lines).strip() + "\\n", encoding="utf-8")
     return Result(dest, "text/markdown", f"{base}.md")
 
 
@@ -880,7 +884,7 @@ def pdf_to_text(work: Path, inputs: list[Path], p: dict) -> Result:
     src.close()
     base = stem(inputs[0])
     dest = work / f"{base}.txt"
-    dest.write_text("\n\n".join(lines).strip() + "\n", encoding="utf-8")
+    dest.write_text("\\n\\n".join(lines).strip() + "\\n", encoding="utf-8")
     return Result(dest, "text/plain", f"{base}.txt")
 
 
@@ -1071,13 +1075,13 @@ def auto_redact(work: Path, inputs: list[Path], p: dict) -> Result:
     
     patterns = []
     if p.get("redact_email"):
-        patterns.append(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
+        patterns.append(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+")
     if p.get("redact_ssn"):
-        patterns.append(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b")
+        patterns.append(r"\\b\\d{3}[-\\s]?\\d{2}[-\\s]?\\d{4}\\b")
     if p.get("redact_phone"):
-        patterns.append(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")
+        patterns.append(r"\\b(?:\\+?1[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b")
     if p.get("redact_cc"):
-        patterns.append(r"\b(?:\d[ -]*?){13,16}\b")
+        patterns.append(r"\\b(?:\\d[ -]*?){13,16}\\b")
         
     if not patterns:
         src.close()
@@ -1113,14 +1117,14 @@ def compare(work: Path, inputs: list[Path], p: dict) -> Result:
     texts = []
     for f in inputs:
         d = open_pdf(f, p.get("password", ""))
-        texts.append("\n".join(pg.get_text("text") for pg in d).splitlines())
+        texts.append("\\n".join(pg.get_text("text") for pg in d).splitlines())
         d.close()
     diff = difflib.unified_diff(texts[0], texts[1],
                                 fromfile=inputs[0].name, tofile=inputs[1].name,
                                 lineterm="", n=2)
-    body = "\n".join(diff) or "(the two text layers are identical)"
+    body = "\\n".join(diff) or "(the two text layers are identical)"
     dest = work / "comparison.md"
-    dest.write_text(f"# Comparison\n\n```diff\n{body}\n```\n", encoding="utf-8")
+    dest.write_text(f"# Comparison\\n\\n\`\`\`diff\\n{body}\\n\`\`\`\\n", encoding="utf-8")
     return Result(dest, "text/markdown", "comparison.md")
 
 
@@ -1215,11 +1219,11 @@ def extract_fonts(work: Path, inputs: list[Path], p: dict) -> Result:
 
 def safe_component(name: str) -> str:
     # os.path.basename does NOT split on backslashes on Linux, so a Windows
-    # path (`..\..\system32`) would arrive whole and its `..` survive. Normalise
-    # both separators first, then drop leading dots so no `..` can remain.
-    name = str(name).replace("\\", "/")
+    # path (\`..\\..\\system32\`) would arrive whole and its \`..\` survive. Normalise
+    # both separators first, then drop leading dots so no \`..\` can remain.
+    name = str(name).replace("\\\\", "/")
     name = os.path.basename(name)
-    name = re.sub(r"[^\w.\- ]+", "_", name).lstrip(".")
+    name = re.sub(r"[^\\w.\\- ]+", "_", name).lstrip(".")
     return name[:100] or "file"
 
 
@@ -1238,7 +1242,7 @@ def metadata(work: Path, inputs: list[Path], p: dict) -> Result:
     base = stem(inputs[0])
     dest = work / f"{base}_metadata.pdf"
 
-    # NOTE: do NOT use `exiftool -all=` to strip a PDF. exiftool cannot truly
+    # NOTE: do NOT use \`exiftool -all=\` to strip a PDF. exiftool cannot truly
     # delete PDF metadata -- PDF is incremental, so it appends an update and the
     # original info/XMP stays recoverable in the file (exiftool itself warns of
     # this). PyMuPDF's save() rewrites the document with garbage collection, so
@@ -1287,8 +1291,8 @@ def sign_pdf(work: Path, inputs: list[Path], p: dict) -> Result:
     dest = work / f"{base}_signed.pdf"
 
     # pyhanko's high-level signers.sign_pdf(writer, meta, signer=, output=)
-    # writes the signed document to `output` and returns the stream -- there is
-    # no .write_to_stream() on the result. Use a `with` for both handles so the
+    # writes the signed document to \`output\` and returns the stream -- there is
+    # no .write_to_stream() on the result. Use a \`with\` for both handles so the
     # output file is closed even when signing raises.
     try:
         with open(pdf_file, "rb") as doc_in, open(dest, "wb") as out_file:
@@ -1345,7 +1349,7 @@ def verify_signature(work: Path, inputs: list[Path], p: dict) -> Result:
         
     base = stem(pdf_file)
     dest = work / f"{base}_signatures.txt"
-    dest.write_text("\n".join(out) + "\n", encoding="utf-8")
+    dest.write_text("\\n".join(out) + "\\n", encoding="utf-8")
     return Result(dest, "text/plain", f"{base}_signatures.txt")
 
 
@@ -1509,7 +1513,7 @@ def rasterise(work: Path, inputs: list[Path], p: dict) -> Result:
 
 def _hex_rgb(value: str) -> tuple[float, float, float]:
     # Strict: an empty or None colour is a caller bug, not black. Callers that
-    # want a default pass it explicitly (`p.get("color") or "#000000"`), so a
+    # want a default pass it explicitly (\`p.get("color") or "#000000"\`), so a
     # blank field falls back there while a truly missing value is caught here.
     if value is None or str(value).strip() == "":
         raise ToolError("colour is required")
@@ -1540,7 +1544,7 @@ def F(name: str, kind: str, label: str, **kw) -> dict:
     return {"name": name, "kind": kind, "label": label, **kw}
 
 
-# `picker` drives the visual page grid in the UI. "select" = a set of pages to
+# \`picker\` drives the visual page grid in the UI. "select" = a set of pages to
 # act on (blank still means all); the UI keeps this field and the grid in sync
 # two ways. remove-pages and organize declare their own variants below.
 PAGES = F("pages", "text", "Pages", placeholder="all, or 1-3,7,10-",
@@ -1644,7 +1648,7 @@ TOOLS: list[Tool] = [
          "Upload a .md file or paste text below.",
          md_to_pdf, accept=".md,.markdown,.mdown,.txt", min_files=0, fields=[
              F("md_text", "textarea", "Markdown text",
-               placeholder="# Title\n\nPaste or type Markdown here. Used only "
+               placeholder="# Title\\n\\nPaste or type Markdown here. Used only "
                            "when no file is uploaded."),
              F("page_size", "select", "Page size",
                options=[["a4", "A4"], ["letter", "US Letter"]], default="a4"),
@@ -1812,3 +1816,148 @@ TOOLS: list[Tool] = [
 ]
 
 REGISTRY = {t.key: t for t in TOOLS}
+`;
+
+// Pyodide Runner Logic
+let pyodide = null;
+let pyodideReadyPromise = null;
+
+async function initPyodide() {
+  if (!pyodideReadyPromise) {
+    pyodideReadyPromise = (async () => {
+      const msg = document.getElementById('fileStatus');
+      if(msg) msg.textContent = 'Loading Pyodide engine... (~20MB)';
+      
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js';
+      document.head.append(script);
+      
+      await new Promise((resolve) => script.onload = resolve);
+      
+      pyodide = await loadPyodide();
+      
+      if(msg) msg.textContent = 'Installing packages...';
+      await pyodide.loadPackage('micropip');
+      const micropip = pyodide.pyimport('micropip');
+      
+      try {
+        // Basic packages
+        await micropip.install(['pymupdf', 'markdown', 'pygments']);
+      } catch (e) {
+        console.error("Failed to install basic Pyodide packages", e);
+      }
+      
+      // Write tools.py to virtual file system
+      pyodide.FS.writeFile('/home/pyodide/tools.py', TOOLS_PY_SOURCE);
+      
+      // Add /home/pyodide to sys.path and import
+      pyodide.runPython(`
+import sys
+import os
+sys.path.insert(0, '/home/pyodide')
+
+# Mock some things that might fail during import in WebAssembly
+os.environ["MAX_PAGES"] = "100"
+os.environ["MAX_MEGAPIXELS"] = "100"
+
+import tools
+from pathlib import Path
+import json
+
+def run_tool_wrapper(key, files_json, params_json):
+    work_dir = Path("/tmp/squish_work")
+    work_dir.mkdir(parents=True, exist_ok=True)
+    
+    files = json.loads(files_json)
+    params = json.loads(params_json)
+    
+    input_paths = []
+    for f in files:
+        p = work_dir / f
+        input_paths.append(p)
+        
+    # Find tool
+    tool = next(t for t in tools.TOOLS if t.key == key)
+    
+    # Run
+    result = tool.fn(work_dir, input_paths, params)
+    
+    # Read output
+    out_path = result.path
+    with open(out_path, 'rb') as f:
+        data = f.read()
+        
+    return {
+        'name': result.filename,
+        'mime': result.media_type,
+        'data': data
+    }
+`);
+      
+      if(msg) msg.textContent = 'Ready.';
+    })();
+  }
+  return pyodideReadyPromise;
+}
+
+window.runPyodideTool = async function(key, files, formData) {
+  await initPyodide();
+  const msg = document.getElementById('fileStatus');
+  if(msg) msg.textContent = 'Processing locally...';
+  
+  try {
+      // Write input files to virtual FS
+      pyodide.FS.mkdir('/tmp/squish_work');
+  } catch(e) {}
+  
+  const fileNames = [];
+  for(let i=0; i<files.length; i++) {
+    const arrayBuffer = await files[i].arrayBuffer();
+    const safeName = files[i].name.replace(/[^a-zA-Z0-9.-]/g, '_');
+    pyodide.FS.writeFile('/tmp/squish_work/' + safeName, new Uint8Array(arrayBuffer));
+    fileNames.push(safeName);
+  }
+  
+  // Extract parameters from formData
+  const params = {};
+  for (let [k, v] of formData.entries()) {
+    if (k !== 'files') {
+      params[k] = v;
+    }
+  }
+  
+  // Convert dicts to JSON for safe passing to Python
+  const filesJson = JSON.stringify(fileNames);
+  const paramsJson = JSON.stringify(params);
+  
+  try {
+    // Call Python wrapper
+    const pyWrapper = pyodide.globals.get('run_tool_wrapper');
+    const pyResult = pyWrapper(key, filesJson, paramsJson);
+    const jsResult = pyResult.toJs({dict_converter: Object.fromEntries});
+    pyResult.destroy();
+    
+    // Convert back to JS Blob
+    const uint8View = jsResult.data;
+    const blob = new Blob([uint8View], {type: jsResult.mime || 'application/pdf'});
+    const name = jsResult.name;
+    
+    return { blob: blob, name: name };
+  } catch (e) {
+    console.error(e);
+    throw new Error("Local processing failed: " + e.message);
+  } finally {
+    // Cleanup /tmp/squish_work/
+    // We try to clean up, if it fails it's just MEMFS memory leak.
+    try {
+      pyodide.runPython(`
+import shutil
+shutil.rmtree('/tmp/squish_work', ignore_errors=True)
+`);
+    } catch(e) {}
+  }
+};
+
+if (window.onStaticToolsReady) {
+  window.onStaticToolsReady(STATIC_TOOLS);
+}
