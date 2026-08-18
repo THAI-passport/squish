@@ -12,11 +12,36 @@ tools_data = []
 for t in tools.TOOLS:
     d = {k: v for k, v in vars(t).items() if not callable(v)}
     
-    # Apply static mode availability
-    unsupported = ["compress", "office-to-pdf", "ocr", "repair", "pdf-to-pdfa", "pdf-to-word"]
+    # Apply static-mode availability.
+    #
+    # Two reasons a tool cannot run client-side in Pyodide:
+    #   1. It shells out to a native CLI binary (there is no subprocess in the
+    #      browser), or
+    #   2. It imports a Python package that has no usable wasm build
+    #      (native system dependencies).
+    #
+    # IMPORTANT: keep this map in sync with tools.py. Any NEW tool that calls
+    # run([...]) or imports weasyprint / pyhanko / another non-wasm package MUST
+    # be added here, otherwise it renders as available in the UI and then throws
+    # "Local processing failed" at runtime. The value is shown to the user as
+    # the reason the tool is greyed out.
+    unsupported = {
+        # -- shell out to a native binary (no subprocess in Pyodide) --
+        "compress":         "Ghostscript",   # gs
+        "grayscale":        "Ghostscript",   # gs
+        "pdf-to-pdfa":      "Ghostscript",   # gs
+        "repair":           "qpdf",          # qpdf
+        "office-to-pdf":    "LibreOffice",   # soffice
+        "ocr":              "OCR engine",    # ocrmypdf + tesseract
+        "pdf-to-word":      "pdf2docx",      # native deps, not wasm-safe
+        # -- import a package with no usable wasm build --
+        "md-to-pdf":        "WeasyPrint",    # needs native cairo/pango
+        "sign-pdf":         "pyhanko",       # crypto stack, not Pyodide-installable
+        "verify-signature": "pyhanko",
+    }
     if d["key"] in unsupported:
         d["available"] = False
-        d["needs"] = "backend binary"
+        d["needs"] = unsupported[d["key"]]
     else:
         d["available"] = True
         d["needs"] = ""
@@ -24,6 +49,17 @@ for t in tools.TOOLS:
     tools_data.append(d)
 
 tools_json = json.dumps(tools_data, separators=(',', ':'))
+
+# Pull the real build version from app.py so the static-mode badge is honest
+# rather than a hardcoded 'v1.0'.
+app_version = "unknown"
+try:
+    with open(os.path.join(os.path.dirname(__file__), 'app.py')) as _f:
+        _m = re.search(r'VERSION\s*=\s*["\']([^"\']+)["\']', _f.read())
+        if _m:
+            app_version = _m.group(1)
+except OSError:
+    pass
 
 # Read tools.py content
 with open(os.path.join(os.path.dirname(__file__), 'tools.py'), 'r') as f:
@@ -35,6 +71,8 @@ tools_py_content = tools_py_content.replace('\\', '\\\\').replace('`', '\\`').re
 js_content = f"""
 // Auto-generated client_tools.js for static WASM fallback
 const STATIC_TOOLS = {tools_json};
+const STATIC_VERSION = "{app_version}";
+window.STATIC_VERSION = STATIC_VERSION;
 
 const TOOLS_PY_SOURCE = `{tools_py_content}`;
 
@@ -49,7 +87,7 @@ async function initPyodide() {{
       if(msg) msg.textContent = 'Loading Pyodide engine... (~20MB)';
       
       const script = document.createElement('script');
-      script.src = 'https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js';
+      script.src = '/vendor/pyodide/pyodide.js';
       document.head.append(script);
       
       await new Promise((resolve) => script.onload = resolve);
@@ -60,11 +98,23 @@ async function initPyodide() {{
       await pyodide.loadPackage('micropip');
       const micropip = pyodide.pyimport('micropip');
       
+      // Core engine — every PyMuPDF-backed tool needs this. If it fails, the
+      // whole static mode is dead, so surface it and stop.
       try {{
-        // Basic packages
-        await micropip.install(['pymupdf', 'markdown', 'pygments']);
+        await micropip.install(['/vendor/pyodide/pymupdf-1.27.2.2-cp314-abi3-pyemscripten_2026_0_wasm32.whl', '/vendor/pyodide/markdown-3.10.3-py3-none-any.whl', 'pygments']);
       }} catch (e) {{
-        console.error("Failed to install basic Pyodide packages", e);
+        console.error("Core engine packages failed to install", e);
+        if(msg) msg.textContent = 'Engine failed to load — check your connection and reload.';
+        throw e;
+      }}
+      // Optional packages: openpyxl -> pdf-to-excel, python-pptx -> pdf-to-powerpoint.
+      // Best-effort: if they cannot be resolved we keep the core tools working;
+      // the two dependent tools then fail per-run with a caught error rather
+      // than taking down the whole engine.
+      try {{
+        await micropip.install(['openpyxl', 'python-pptx']);
+      }} catch (e) {{
+        console.warn("Optional export packages unavailable; pdf-to-excel / pdf-to-powerpoint may fail", e);
       }}
       
       // Write tools.py to virtual file system
@@ -76,9 +126,14 @@ import sys
 import os
 sys.path.insert(0, '/home/pyodide')
 
-# Mock some things that might fail during import in WebAssembly
+# Constrain resource budgets for the browser BEFORE importing tools, since
+# tools.py reads these into module-level constants at import time.
+# NOTE: the names must match tools.py exactly — MAX_PAGES and MAX_RENDER_MP.
+# (An earlier version set MAX_MEGAPIXELS, which tools.py never reads, so the
+# render budget silently stayed at the 4000 MP server default and could OOM
+# the tab.)
 os.environ["MAX_PAGES"] = "100"
-os.environ["MAX_MEGAPIXELS"] = "100"
+os.environ["MAX_RENDER_MP"] = "300"
 
 import tools
 from pathlib import Path

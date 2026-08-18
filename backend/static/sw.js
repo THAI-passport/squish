@@ -31,7 +31,7 @@ self.addEventListener('fetch', e => {
   // Never touch API calls, and never cache the vendored pdf.js (large, and the
   // network copy is authoritative).
   if (req.method !== 'GET' || url.pathname.startsWith('/api/') ||
-      url.pathname.startsWith('/vendor/')) return;
+      (url.pathname.startsWith('/vendor/') && !url.pathname.startsWith('/vendor/pyodide/'))) return;
 
   // HTML / navigations: network-first so a new deploy is picked up immediately;
   // fall back to cache only when offline.

@@ -500,7 +500,7 @@ footer code { font-family: var(--font-mono); }
 'use strict';
 
 /* ------------------------------------------------------------- state --- */
-let TOOLS = [], LIMITS = {}, current = null, files = [];
+let TOOLS = [], LIMITS = { max_upload_mb: 50 }, current = null, files = [];
 let isStatic = false;
 
 /* ------------------------------------------------------ pdf.js loader --- */
@@ -1095,21 +1095,16 @@ function toggleTheme(){
 }
 
 function toast(msg, type='ok') {
-  const el = document.getElementById('toast');
-  if (!el) {
-    // create toast element if it doesn't exist
-    const t = document.createElement('div');
-    t.id = 'toast';
-    t.style.position = 'fixed'; t.style.bottom = '20px'; t.style.right = '20px';
-    t.style.padding = '12px 24px'; t.style.background = '#2c3e50'; t.style.color = '#fff';
-    t.style.borderRadius = '8px'; t.style.zIndex = '9999';
-    document.body.append(t);
-  }
-  const t = document.getElementById('toast');
+  // Use the themed #toasts region so screen readers announce it: errors are
+  // role="alert" (assertive), everything else role="status" (polite).
+  const region = document.getElementById('toasts');
+  if (!region) return;
+  const t = document.createElement('div');
+  t.className = 'toast ' + (type === 'err' ? 'err' : 'ok');
+  t.setAttribute('role', type === 'err' ? 'alert' : 'status');
   t.textContent = msg;
-  t.style.background = type === 'err' ? '#e74c3c' : '#2c3e50';
-  t.style.display = 'block';
-  setTimeout(() => { t.style.display = 'none'; }, 5000);
+  region.append(t);
+  setTimeout(() => { t.remove(); }, 5000);
 }
 
 const ICONS = { 'merge':'🧩','split':'✂️','remove-pages':'🗑️','organize':'🔀','rotate':'🔄', 'compress':'🗜️','repair':'🩹','ocr':'🔍','jpg-to-pdf':'🖼️','office-to-pdf':'📊', 'pdf-to-jpg':'📸','pdf-to-word':'📝','pdf-to-excel':'📈','pdf-to-powerpoint':'📽️', 'pdf-to-pdfa':'🏛️','pdf-to-markdown':'⌨️','watermark':'💧','page-numbers':'#️⃣', 'crop':'⛶','protect':'🔐','unlock':'🔓','redact':'🖍️','compare':'⚖️' };
@@ -1128,7 +1123,7 @@ async function boot(){
     console.log("Backend not available, falling back to static mode", e);
     isStatic = true;
     
-    document.getElementById('ver').textContent = 'v1.0 (static mode)';
+    document.getElementById('ver').textContent = 'static mode';
     const badge = document.getElementById('offlineBadge');
     badge.classList.add('is-static');
     document.getElementById('footerMode').textContent = 'WASM Client-side';
@@ -1148,6 +1143,9 @@ async function boot(){
 window.onStaticToolsReady = function(staticTools) {
   TOOLS = staticTools;
   LIMITS = { max_upload_mb: 50 }; // Hardcode reasonable limit for WASM
+  if (window.STATIC_VERSION) {
+    document.getElementById('ver').textContent = 'v' + window.STATIC_VERSION + ' (static)';
+  }
   render();
 };
 
