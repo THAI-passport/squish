@@ -1,54 +1,73 @@
 import json
 import os
 import re
-
-# Read original tools.json if we can, or just tools.py
+import io
 import sys
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-import tools
+import contextlib
 
-# Filter out callables
-tools_data = []
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+
+# Importing tools pulls in PyMuPDF, which prints a
+#   "warning: The fitz API is deprecated ... Use `import pymupdf` instead"
+# banner to STDOUT on `import fitz`. If this generator's stdout is ever
+# redirected into a file (e.g. `python generate_client_tools.py > tools.json`),
+# that banner ends up as the first line and corrupts the JSON. Swallow anything
+# the import prints so every artifact we emit is clean regardless of how the
+# generator is invoked.
+_import_noise = io.StringIO()
+with contextlib.redirect_stdout(_import_noise), contextlib.redirect_stderr(_import_noise):
+    import tools
+
+# Apply static-mode availability.
+#
+# Two reasons a tool cannot run client-side in Pyodide:
+#   1. It shells out to a native CLI binary (there is no subprocess in the
+#      browser), or
+#   2. It imports a Python package that has no usable wasm build
+#      (native system dependencies).
+#
+# IMPORTANT: keep this map in sync with tools.py. Any NEW tool that calls
+# run([...]) or imports weasyprint / pyhanko / another non-wasm package MUST
+# be added here, otherwise it renders as available in the UI and then throws
+# "Local processing failed" at runtime. The value is shown to the user as
+# the reason the tool is greyed out.
+unsupported = {
+    # -- shell out to a native binary (no subprocess in Pyodide) --
+    "compress":         "Ghostscript",   # gs
+    "grayscale":        "Ghostscript",   # gs
+    "pdf-to-pdfa":      "Ghostscript",   # gs
+    "repair":           "qpdf",          # qpdf
+    "office-to-pdf":    "LibreOffice",   # soffice
+    "ocr":              "OCR engine",    # ocrmypdf + tesseract
+    "pdf-to-word":      "pdf2docx",      # native deps, not wasm-safe
+    # -- import a package with no usable wasm build --
+    "md-to-pdf":        "WeasyPrint",    # needs native cairo/pango
+    "sign-pdf":         "pyhanko",       # crypto stack, not Pyodide-installable
+    "verify-signature": "pyhanko",
+}
+
+# Two shapes are built from one pass over the registry:
+#   registry_data  -> the raw tool registry, written to tools.json (valid,
+#                     pretty, no environment-specific fields). This is the
+#                     human-readable source of truth.
+#   static_data    -> the same tools plus static-mode availability, inlined
+#                     into client_tools.js for the Pyodide fallback.
+registry_data = []
+static_data = []
 for t in tools.TOOLS:
     d = {k: v for k, v in vars(t).items() if not callable(v)}
-    
-    # Apply static-mode availability.
-    #
-    # Two reasons a tool cannot run client-side in Pyodide:
-    #   1. It shells out to a native CLI binary (there is no subprocess in the
-    #      browser), or
-    #   2. It imports a Python package that has no usable wasm build
-    #      (native system dependencies).
-    #
-    # IMPORTANT: keep this map in sync with tools.py. Any NEW tool that calls
-    # run([...]) or imports weasyprint / pyhanko / another non-wasm package MUST
-    # be added here, otherwise it renders as available in the UI and then throws
-    # "Local processing failed" at runtime. The value is shown to the user as
-    # the reason the tool is greyed out.
-    unsupported = {
-        # -- shell out to a native binary (no subprocess in Pyodide) --
-        "compress":         "Ghostscript",   # gs
-        "grayscale":        "Ghostscript",   # gs
-        "pdf-to-pdfa":      "Ghostscript",   # gs
-        "repair":           "qpdf",          # qpdf
-        "office-to-pdf":    "LibreOffice",   # soffice
-        "ocr":              "OCR engine",    # ocrmypdf + tesseract
-        "pdf-to-word":      "pdf2docx",      # native deps, not wasm-safe
-        # -- import a package with no usable wasm build --
-        "md-to-pdf":        "WeasyPrint",    # needs native cairo/pango
-        "sign-pdf":         "pyhanko",       # crypto stack, not Pyodide-installable
-        "verify-signature": "pyhanko",
-    }
-    if d["key"] in unsupported:
-        d["available"] = False
-        d["needs"] = unsupported[d["key"]]
-    else:
-        d["available"] = True
-        d["needs"] = ""
-        
-    tools_data.append(d)
+    registry_data.append(dict(d))
 
-tools_json = json.dumps(tools_data, separators=(',', ':'))
+    s = dict(d)
+    if s["key"] in unsupported:
+        s["available"] = False
+        s["needs"] = unsupported[s["key"]]
+    else:
+        s["available"] = True
+        s["needs"] = ""
+    static_data.append(s)
+
+tools_json = json.dumps(static_data, separators=(',', ':'))
 
 # Pull the real build version from app.py so the static-mode badge is honest
 # rather than a hardcoded 'v1.0'.
@@ -85,19 +104,19 @@ async function initPyodide() {{
     pyodideReadyPromise = (async () => {{
       const msg = document.getElementById('fileStatus');
       if(msg) msg.textContent = 'Loading Pyodide engine... (~20MB)';
-      
+
       const script = document.createElement('script');
       script.src = '/vendor/pyodide/pyodide.js';
       document.head.append(script);
-      
+
       await new Promise((resolve) => script.onload = resolve);
-      
+
       pyodide = await loadPyodide();
-      
+
       if(msg) msg.textContent = 'Installing packages...';
       await pyodide.loadPackage('micropip');
       const micropip = pyodide.pyimport('micropip');
-      
+
       // Core engine — every PyMuPDF-backed tool needs this. If it fails, the
       // whole static mode is dead, so surface it and stop.
       try {{
@@ -116,10 +135,10 @@ async function initPyodide() {{
       }} catch (e) {{
         console.warn("Optional export packages unavailable; pdf-to-excel / pdf-to-powerpoint may fail", e);
       }}
-      
+
       // Write tools.py to virtual file system
       pyodide.FS.writeFile('/home/pyodide/tools.py', TOOLS_PY_SOURCE);
-      
+
       // Add /home/pyodide to sys.path and import
       pyodide.runPython(`
 import sys
@@ -142,33 +161,33 @@ import json
 def run_tool_wrapper(key, files_json, params_json):
     work_dir = Path("/tmp/squish_work")
     work_dir.mkdir(parents=True, exist_ok=True)
-    
+
     files = json.loads(files_json)
     params = json.loads(params_json)
-    
+
     input_paths = []
     for f in files:
         p = work_dir / f
         input_paths.append(p)
-        
+
     # Find tool
     tool = next(t for t in tools.TOOLS if t.key == key)
-    
+
     # Run
     result = tool.fn(work_dir, input_paths, params)
-    
+
     # Read output
     out_path = result.path
     with open(out_path, 'rb') as f:
         data = f.read()
-        
+
     return {{
         'name': result.filename,
         'mime': result.media_type,
         'data': data
     }}
 `);
-      
+
       if(msg) msg.textContent = 'Ready.';
     }})();
   }}
@@ -179,12 +198,12 @@ window.runPyodideTool = async function(key, files, formData) {{
   await initPyodide();
   const msg = document.getElementById('fileStatus');
   if(msg) msg.textContent = 'Processing locally...';
-  
+
   try {{
       // Write input files to virtual FS
       pyodide.FS.mkdir('/tmp/squish_work');
   }} catch(e) {{}}
-  
+
   const fileNames = [];
   for(let i=0; i<files.length; i++) {{
     const arrayBuffer = await files[i].arrayBuffer();
@@ -192,7 +211,7 @@ window.runPyodideTool = async function(key, files, formData) {{
     pyodide.FS.writeFile('/tmp/squish_work/' + safeName, new Uint8Array(arrayBuffer));
     fileNames.push(safeName);
   }}
-  
+
   // Extract parameters from formData
   const params = {{}};
   for (let [k, v] of formData.entries()) {{
@@ -200,23 +219,23 @@ window.runPyodideTool = async function(key, files, formData) {{
       params[k] = v;
     }}
   }}
-  
+
   // Convert dicts to JSON for safe passing to Python
   const filesJson = JSON.stringify(fileNames);
   const paramsJson = JSON.stringify(params);
-  
+
   try {{
     // Call Python wrapper
     const pyWrapper = pyodide.globals.get('run_tool_wrapper');
     const pyResult = pyWrapper(key, filesJson, paramsJson);
     const jsResult = pyResult.toJs({{dict_converter: Object.fromEntries}});
     pyResult.destroy();
-    
+
     // Convert back to JS Blob
     const uint8View = jsResult.data;
     const blob = new Blob([uint8View], {{type: jsResult.mime || 'application/pdf'}});
     const name = jsResult.name;
-    
+
     return {{ blob: blob, name: name }};
   }} catch (e) {{
     console.error(e);
@@ -242,4 +261,12 @@ out_path = os.path.join(os.path.dirname(__file__), 'static', 'client_tools.js')
 with open(out_path, "w") as f:
     f.write(js_content)
 
-print(f"Generated {{out_path}} successfully!")
+# Emit a clean, canonical tools.json (valid, pretty-printed) alongside the JS.
+# Previously this file was produced by hand with stdout redirection, which
+# leaked the PyMuPDF import banner into it and left it as invalid JSON.
+registry_path = os.path.join(os.path.dirname(__file__), 'tools.json')
+with open(registry_path, "w") as f:
+    json.dump(registry_data, f, indent=2)
+    f.write("\n")
+
+print(f"Generated {out_path} and {registry_path} successfully!")
