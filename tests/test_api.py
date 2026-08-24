@@ -285,4 +285,8 @@ def test_text_only_tool_accepts_no_file(client):
     # upload guard (it may still 400 later if weasyprint is absent, but NOT with
     # "no files uploaded").
     r = client.post("/api/t/md-to-pdf", data={"md_text": "# Hi\n\ntext"})
-    assert "no files uploaded" not in r.json().get("detail", "")
+    if r.headers.get("content-type", "").startswith("application/json"):
+        assert "no files uploaded" not in r.json().get("detail", "")
+    else:
+        # WeasyPrint is present and rendered; the upload guard passed.
+        assert r.content[:5] == b"%PDF-"

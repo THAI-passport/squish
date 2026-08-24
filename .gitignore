@@ -33,6 +33,15 @@ Thumbs.db
 backend/static/vendor/pdf.min.js
 backend/static/vendor/pdf.worker.min.js
 
+# Node -- only ever needed for one-off local experiments; the Pyodide runtime
+# the static build serves is vendored into backend/static/vendor/pyodide/.
+node_modules/
+package-lock.json
+
+# Generated registry dump -- rewritten on every run of
+# backend/generate_client_tools.py, alongside the tracked client_tools.js.
+backend/tools.json
+
 # Local overrides
 .env
 docker-compose.override.yml

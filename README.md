@@ -12,9 +12,8 @@ docker compose up --build         # http://localhost:8000
 kubectl apply -f k8s/squish.yaml
 ```
 
-> **Status: works, not yet proven.** The full test suite is written but has not
-> been run end-to-end — see [Tests](#tests) before you rely on this for
-> anything that matters.
+> **Status: works.** The full test suite passes end-to-end — see
+> [Tests](#tests) for what is and isn't covered (the Pyodide static mode is not).
 
 ---
 
@@ -304,12 +303,10 @@ installs all three then **fails the build if anything skipped for a missing
 engine** — otherwise a green board would mean nothing for the half of the suite
 that matters most.
 
-**The honest status:** the suite was written in an environment without PyPI
-access, so PyMuPDF, FastAPI and ocrmypdf were never installed and the tests
-have never executed. Everything verified so far was verified against the CLI
-engines directly or by logic check. `pytest` is the real acceptance gate for
-this repo — treat any claim about a PyMuPDF-backed tool as unproven until it
-passes.
+**Status:** the full suite passes end-to-end locally (150 passed, all engines
+installed, nothing skipped). It was originally written in an environment
+without PyPI access and had never executed until it did — treat `pytest` as
+the acceptance gate for any change to a PyMuPDF-backed tool.
 
 ## Two things to know before you deploy this
 
