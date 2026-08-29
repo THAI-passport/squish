@@ -234,7 +234,17 @@ window.runPyodideTool = async function(key, files, formData) {{
 
   const fileNames = [];
   for(let i=0; i<files.length; i++) {{
-    const arrayBuffer = await files[i].arrayBuffer();
+    let arrayBuffer;
+    try {{
+      arrayBuffer = await files[i].arrayBuffer();
+    }} catch(err) {{
+      arrayBuffer = await new Promise((resolve, reject) => {{
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Could not read file: ' + (reader.error?.message || err.message)));
+        reader.readAsArrayBuffer(files[i]);
+      }});
+    }}
     const safeName = files[i].name.replace(/[^a-zA-Z0-9.-]/g, '_');
     pyodide.FS.writeFile('/tmp/squish_work/' + safeName, new Uint8Array(arrayBuffer));
     fileNames.push(safeName);
@@ -330,13 +340,26 @@ window.runStaticSecureEmail = async function(files, formData) {{
 
   const htmlFile = files.find(f => /\\.(html?|txt)$/i.test(f.name));
   const customHtml = String(formData.get('email_body_html') || '');
+  let resolvedHtml = customHtml;
+  if (!resolvedHtml && htmlFile) {{
+    try {{
+      resolvedHtml = await htmlFile.text();
+    }} catch(e) {{
+      resolvedHtml = await new Promise((resolve) => {{
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => resolve('');
+        reader.readAsText(htmlFile);
+      }});
+    }}
+  }}
   const payload = {{
     smtp,
     recipient: String(formData.get('recipient_email') || ''),
     subject: String(formData.get('email_subject') || ''),
     pdfBase64: await blobToBase64(protectedResult.blob),
     pdfFilename: protectedResult.name,
-    htmlBody: customHtml || (htmlFile ? await htmlFile.text() : ''),
+    htmlBody: resolvedHtml,
     password,
     delaySeconds: Number(formData.get('delay_seconds') || 2.5),
     email2Subject: String(formData.get('email2_subject') || ''),

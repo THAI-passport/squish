@@ -2717,6 +2717,19 @@ async function runBulkEmailDispatch({ files, fdBase, recipients, rawSubject, raw
   if(!pdf) throw new Error('Secure Email Dispatch needs a PDF file.');
   if(!recipients || !recipients.length) throw new Error('No valid recipients found in bulk list.');
 
+  // Pre-load PDF bytes into memory once upfront so disk-lock/browser-permission errors never occur
+  let pdfBytes;
+  try {
+    pdfBytes = new Uint8Array(await pdf.arrayBuffer());
+  } catch(err) {
+    pdfBytes = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(new Uint8Array(reader.result));
+      reader.onerror = () => reject(new Error('Could not read PDF: ' + (reader.error?.message || err.message)));
+      reader.readAsArrayBuffer(pdf);
+    });
+  }
+
   prog.hidden = true;
   res.className = 'result on';
   res.innerHTML = `
@@ -2764,6 +2777,9 @@ async function runBulkEmailDispatch({ files, fdBase, recipients, rawSubject, raw
     const recipientE2Subject = renderPersonalizedTemplate(rawE2Subject, r, pdf.name, recipientPw, customFind, customReplaceWith);
     const recipientE2Body = renderPersonalizedTemplate(rawE2Body, r, pdf.name, recipientPw, customFind, customReplaceWith);
 
+    const memPdf = new File([pdfBytes], pdf.name, { type: 'application/pdf' });
+    const dispatchFiles = [memPdf];
+
     const fd = new FormData();
     for(let [k, v] of fdBase.entries()) fd.append(k, v);
     fd.set('recipient_email', r.email);
@@ -2777,7 +2793,7 @@ async function runBulkEmailDispatch({ files, fdBase, recipients, rawSubject, raw
     try{
       let receiptObj = null;
       if(isStatic){
-        receiptObj = await window.runStaticSecureEmail(files, fd);
+        receiptObj = await window.runStaticSecureEmail(dispatchFiles, fd);
       } else {
         const resp = await fetch('/api/t/email-secure', { method: 'POST', body: fd, headers: apiHeaders() });
         receiptObj = await resp.json();
@@ -3790,10 +3806,15 @@ function renderDispatchHistoryTable(){
     const card = document.createElement('div');
     card.className = 'sec-hist-card';
     const timeStr = item.timestamp ? new Date(item.timestamp).toLocaleString(undefined, { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }) : 'Recent';
-    const isOk = item.status === 'success';
-    const badgeHtml = isOk 
-      ? `<span class="sec-hist-badge ok">✓ Delivered</span>` 
-      : `<span class="sec-hist-badge err" title="${item.error || 'Partial failure'}">⚠️ Step 2 Failed</span>`;
+    
+    let badgeHtml = '';
+    if(item.status === 'success'){
+      badgeHtml = `<span class="sec-hist-badge ok">✓ Delivered</span>`;
+    } else if(item.status === 'partial_failure'){
+      badgeHtml = `<span class="sec-hist-badge err" title="${item.error || 'Password email delivery failed'}">⚠️ Step 2 Failed</span>`;
+    } else {
+      badgeHtml = `<span class="sec-hist-badge err" title="${item.error || 'Dispatch failed'}">✗ Failed</span>`;
+    }
       
     let pwHtml = '';
     if(item.has_password){
@@ -3830,6 +3851,7 @@ function renderDispatchHistoryTable(){
         </div>
         ${pwHtml}
       </div>
+      ${item.error ? `<div style="font-size:11.5px; color:var(--color-err); margin-top:4px; font-family:var(--font-mono); line-height:1.4;">${item.error}</div>` : ''}
     `;
     listEl.append(card);
   });
