@@ -593,6 +593,57 @@ footer code { font-family:var(--font-mono); }
 .sec-btn-icon:hover { color:var(--color-ink); border-color:var(--color-rule-2); }
 .sec-btn-icon:focus-visible { outline:2px solid var(--color-accent); outline-offset:2px; }
 
+/* Bulk Email Dispatch & Dynamic Templates */
+.sec-chip-placeholder {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--color-paper); border: 1px solid var(--color-rule);
+  color: var(--color-accent-solid); font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+  padding: 2px 7px; border-radius: 4px; cursor: pointer; transition: .12s;
+  user-select: none;
+}
+.sec-chip-placeholder:hover {
+  background: var(--color-accent-wash); border-color: var(--color-accent); transform: translateY(-1px);
+}
+.sec-bulk-wrap {
+  display: flex; flex-direction: column; gap: 10px; background: var(--color-paper-2);
+  border: 1px solid var(--color-rule); border-radius: 10px; padding: 14px; margin-top: 4px;
+}
+.sec-bulk-dropzone {
+  display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--color-ink-muted);
+  cursor: pointer; padding: 4px 9px; background: var(--color-paper); border: 1px dashed var(--color-rule-2);
+  border-radius: 6px; transition: .15s;
+}
+.sec-bulk-dropzone:hover { border-color: var(--color-accent); color: var(--color-accent-solid); }
+.sec-bulk-table-container {
+  max-height: 220px; overflow-y: auto; border: 1px solid var(--color-rule); border-radius: 8px;
+  background: var(--color-panel); margin-top: 4px;
+}
+.sec-bulk-table {
+  width: 100%; border-collapse: collapse; font-size: 12px; text-align: left;
+}
+.sec-bulk-table th {
+  position: sticky; top: 0; background: var(--color-paper); padding: 7px 10px;
+  font-size: 11px; font-weight: 600; color: var(--color-ink-muted); border-bottom: 1px solid var(--color-rule);
+}
+.sec-bulk-table td {
+  padding: 7px 10px; border-bottom: 1px solid var(--color-rule); color: var(--color-ink); vertical-align: middle;
+}
+.sec-bulk-table tr:last-child td { border-bottom: 0; }
+.sec-bulk-table tr:hover td { background: var(--color-paper); }
+
+/* Progress Bar for Bulk Dispatch */
+.sec-progress-wrap {
+  margin: 14px 0; padding: 14px; background: var(--color-paper); border: 1px solid var(--color-rule);
+  border-radius: 10px; display: flex; flex-direction: column; gap: 8px; font-size: 13px;
+}
+.sec-progress-bar-bg {
+  width: 100%; height: 8px; background: var(--color-rule); border-radius: 999px; overflow: hidden;
+}
+.sec-progress-bar-fill {
+  height: 100%; background: linear-gradient(90deg, var(--color-accent), var(--color-accent-solid));
+  width: 0%; transition: width 0.25s ease;
+}
+
 /* Tool Drag & Drop in Sidebar */
 .tool-item {
   position: relative;
@@ -1883,14 +1934,184 @@ function updateEmailPreview(){
   }
 }
 
-function insertE2Placeholder(ph){
-  const el = document.getElementById('f_email2_body');
+function insertPlaceholderAtCursor(inputId, ph){
+  const el = document.getElementById(inputId);
   if(!el) return;
   const start = el.selectionStart || el.value.length;
   const end = el.selectionEnd || el.value.length;
   el.value = el.value.substring(0, start) + ph + el.value.substring(end);
   el.focus();
   el.selectionStart = el.selectionEnd = start + ph.length;
+  if(inputId === 'f_email_body_html'){
+    const prevPane = document.getElementById('secPreviewPane');
+    if(prevPane && prevPane.style.display === 'block') updateEmailPreview();
+  }
+}
+
+function insertE2Placeholder(ph){
+  insertPlaceholderAtCursor('f_email2_body', ph);
+}
+
+function validateEmailFormat(email){
+  return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test((email || '').trim());
+}
+
+function splitCsvLine(line, delimiter){
+  if(delimiter === '\t') return line.split('\t');
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+  for(let i = 0; i < line.length; i++){
+    const char = line[i];
+    if(char === '"' || char === "'"){
+      inQuotes = !inQuotes;
+    } else if(char === delimiter && !inQuotes){
+      result.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+function parseBulkRecipients(text){
+  const trimmed = (text || '').trim();
+  if(!trimmed) return [];
+
+  // 1. Try JSON Array
+  if(trimmed.startsWith('[') && trimmed.endsWith(']')){
+    try {
+      const arr = JSON.parse(trimmed);
+      if(Array.isArray(arr)){
+        return arr.map(item => ({
+          email: String(item.email || item.recipient || item.mail || '').trim(),
+          name: String(item.name || item.fullName || item.recipient_name || '').trim(),
+          message: String(item.message || item.msg || item.note || '').trim()
+        })).filter(r => validateEmailFormat(r.email));
+      }
+    } catch(e){}
+  }
+
+  const lines = trimmed.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if(!lines.length) return [];
+
+  const results = [];
+  let startIndex = 0;
+  const firstLower = lines[0].toLowerCase();
+  let delimiter = lines[0].includes('\t') ? '\t' : (lines[0].includes(',') ? ',' : null);
+
+  let emailCol = 0, nameCol = 1, msgCol = 2;
+  if(delimiter && (firstLower.includes('email') || firstLower.includes('name') || firstLower.includes('recipient'))){
+    const headers = lines[0].split(delimiter).map(h => h.trim().toLowerCase().replace(/^["']|["']$/g, ''));
+    emailCol = headers.findIndex(h => h.includes('email') || h.includes('recipient') || h.includes('mail'));
+    if(emailCol === -1) emailCol = 0;
+    nameCol = headers.findIndex(h => h.includes('name'));
+    msgCol = headers.findIndex(h => h.includes('message') || h.includes('msg') || h.includes('note') || h.includes('custom'));
+    startIndex = 1;
+  }
+
+  for(let i = startIndex; i < lines.length; i++){
+    const line = lines[i];
+    if(!line) continue;
+
+    // Key-value format: email: "Name" | "Message" or email: "Name"
+    const kvMatch = line.match(/^([^\s@:]+@[^\s@:]+\.[^\s@:]+)\s*:\s*([^|]+)(?:\|\s*(.*))?$/);
+    if(kvMatch){
+      const email = kvMatch[1].trim();
+      const name = kvMatch[2].trim().replace(/^["']|["']$/g, '');
+      const msg = kvMatch[3] ? kvMatch[3].trim().replace(/^["']|["']$/g, '') : '';
+      if(validateEmailFormat(email)){
+        results.push({ email, name, message: msg });
+        continue;
+      }
+    }
+
+    // CSV / TSV format
+    if(delimiter){
+      const parts = splitCsvLine(line, delimiter);
+      const email = (parts[emailCol] || '').trim().replace(/^["']|["']$/g, '');
+      const name = nameCol >= 0 && parts[nameCol] ? parts[nameCol].trim().replace(/^["']|["']$/g, '') : '';
+      const msg = msgCol >= 0 && parts[msgCol] ? parts[msgCol].trim().replace(/^["']|["']$/g, '') : '';
+      if(validateEmailFormat(email)){
+        results.push({ email, name, message: msg });
+        continue;
+      }
+    }
+
+    // Plain emails (single or comma/space separated)
+    const emailsInLine = line.split(/[,\s;]+/).map(s => s.trim().replace(/^["']|["']$/g, '')).filter(validateEmailFormat);
+    for(const em of emailsInLine){
+      results.push({ email: em, name: '', message: '' });
+    }
+  }
+
+  return results;
+}
+
+function renderPersonalizedTemplate(template, recipient, docName, password, customFind, customReplaceWith){
+  let str = String(template || '');
+  if(customFind && customFind.trim()){
+    const findVal = customFind.trim();
+    const replaceVal = recipient[customReplaceWith] || '';
+    str = str.split(findVal).join(replaceVal);
+  }
+  return str
+    .replace(/\{\{name\}\}/gi, recipient.name || '')
+    .replace(/\{\{email\}\}/gi, recipient.email || '')
+    .replace(/\{\{(?:message|msg|note)\}\}/gi, recipient.message || '')
+    .replace(/\{\{(?:doc_name|filename)\}\}/gi, docName || '')
+    .replace(/\{\{password\}\}/gi, password || '');
+}
+
+function openRecipientPreviewModal(index){
+  const r = (window.parsedBulkRecipients || [])[index];
+  if(!r) return;
+  const pdfName = (files && files[0]?.name) || 'Confidential_Document.pdf';
+  const customFind = document.getElementById('f_bulk_custom_find')?.value || '';
+  const customReplaceWith = document.getElementById('f_bulk_custom_replace')?.value || 'name';
+  const rawHtml = document.getElementById('f_email_body_html')?.value || '';
+  const rawSubj = document.getElementById('f_email_subject')?.value || '';
+
+  const renderedSubj = renderPersonalizedTemplate(rawSubj || pdfName, r, pdfName, '••••••••', customFind, customReplaceWith);
+  const renderedHtml = renderPersonalizedTemplate(rawHtml, r, pdfName, '••••••••', customFind, customReplaceWith);
+
+  const prevCard = document.createElement('div');
+  prevCard.className = 'vault-backdrop';
+  prevCard.id = 'recipientPreviewModal';
+  prevCard.innerHTML = `
+    <div class="vault-modal" style="max-width:620px;">
+      <div class="vault-head">
+        <h3>
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:18px; height:18px;"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+          Preview for ${r.name || r.email}
+        </h3>
+        <button type="button" class="vault-close" onclick="document.getElementById('recipientPreviewModal').remove()"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px; height:16px;"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></button>
+      </div>
+      <div class="vault-body" style="gap:12px;">
+        <div style="font-size:12.5px; background:var(--color-paper); border:1px solid var(--color-rule); border-radius:8px; padding:10px 12px; line-height:1.5;">
+          <div><strong>To:</strong> <code style="font-family:var(--font-mono);">${r.email}</code> ${r.name ? `(${r.name})` : ''}</div>
+          <div><strong>Subject:</strong> ${renderedSubj}</div>
+          ${r.message ? `<div><strong>Personal Note:</strong> ${r.message}</div>` : ''}
+        </div>
+        <div style="border:1px solid var(--color-rule); border-radius:8px; padding:14px; background:#fff; color:#000; max-height:360px; overflow-y:auto;">
+          ${renderedHtml || '<p style="color:#666; font-style:italic;">No custom body provided (default template will be used)</p>'}
+        </div>
+        <div style="display:flex; justify-content:flex-end;">
+          <button type="button" class="btn--primary" onclick="document.getElementById('recipientPreviewModal').remove()">Close Preview</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.append(prevCard);
+}
+
+function generateRandomPasswordString(len = 16){
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%&*';
+  const raw = new Uint8Array(len);
+  crypto.getRandomValues(raw);
+  return Array.from(raw, b => chars[b % chars.length]).join('');
 }
 
 function buildSecureEmailFields(box){
@@ -1971,27 +2192,180 @@ function buildSecureEmailFields(box){
     manualBox.style.display = selEl.value === '__manual__' ? 'flex' : 'none';
   };
 
-  // 4. Recipient Email & Subject
+  // 4. Recipient Configuration (Single vs Bulk Tabs)
+  let currentRecipMode = 'single';
   const recipField = document.createElement('div'); recipField.className = 'field wide';
   recipField.innerHTML = `
-    <label for="f_recipient_email">Recipient Email Address</label>
-    <input type="email" id="f_recipient_email" placeholder="recipient@example.com" required>
-    <span class="hint">Destination inbox for both the encrypted document and the subsequent password.</span>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+      <label style="margin:0; font-weight:600;">Recipient Mode</label>
+      <div class="sec-tab-group">
+        <button type="button" class="sec-tab-btn is-active" id="secTabSingleRecipBtn">👤 Single Recipient</button>
+        <button type="button" class="sec-tab-btn" id="secTabBulkRecipBtn">👥 Bulk (CSV / TSV / JSON / List)</button>
+      </div>
+    </div>
+    
+    <!-- Single Recipient Pane -->
+    <div id="secSingleRecipPane">
+      <input type="email" id="f_recipient_email" placeholder="recipient@example.com">
+      <span class="hint">Destination inbox for both the encrypted document and the subsequent password.</span>
+    </div>
+
+    <!-- Bulk Recipients Pane -->
+    <div id="secBulkRecipPane" style="display:none;" class="sec-bulk-wrap">
+      <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:12.5px; font-weight:600; color:var(--color-ink);">Bulk Recipients Input</span>
+          <span class="badge" id="secBulkCountBadge">0 recipients detected</span>
+        </div>
+        <div style="display:flex; gap:6px;">
+          <button type="button" class="btn-sm" id="secLoadSampleCsvBtn" style="font-size:11.5px; padding:3px 8px; background:var(--color-paper); border:1px solid var(--color-rule); border-radius:5px; cursor:pointer;">Load Sample Data</button>
+          <label class="sec-bulk-dropzone" title="Upload .csv, .tsv, .json, or .txt">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" style="width:14px; height:14px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            <span>Import File</span>
+            <input type="file" id="secBulkFileInput" accept=".csv,.tsv,.json,.txt" style="display:none">
+          </label>
+        </div>
+      </div>
+
+      <textarea id="f_bulk_recipients" style="min-height:95px; font-family:var(--font-mono); font-size:12px;" placeholder="Paste CSV, TSV, JSON, or key-value list:&#10;sandman69@gmail.com: &quot;Mr. Sand Man&quot; | &quot;Your confidential audit report&quot;&#10;ironman555@gmail.com: &quot;Robert Stark&quot; | &quot;Updated project blueprint&quot;"></textarea>
+      
+      <!-- Custom Find and Replace Option -->
+      <div style="background:var(--color-panel); border:1px solid var(--color-rule); border-radius:6px; padding:8px 10px; font-size:12px; display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+        <span style="font-weight:600; color:var(--color-ink-2);">Custom Find & Replace:</span>
+        <span>Replace text</span>
+        <input type="text" id="f_bulk_custom_find" placeholder="e.g. [CLIENT_NAME] or Dear Client" style="padding:2px 6px; font-size:11.5px; width:170px; border:1px solid var(--color-rule); border-radius:4px; background:var(--color-paper);">
+        <span>with</span>
+        <select id="f_bulk_custom_replace" style="padding:2px 6px; font-size:11.5px; width:auto; border:1px solid var(--color-rule); border-radius:4px; background:var(--color-paper);">
+          <option value="name">Recipient Name ({{name}})</option>
+          <option value="message">Personal Message ({{message}})</option>
+          <option value="email">Email Address ({{email}})</option>
+        </select>
+      </div>
+
+      <!-- Live Parsed Recipients Table -->
+      <div id="secBulkTableWrap" style="display:none;">
+        <div style="font-size:11.5px; font-weight:600; color:var(--color-ink-muted); margin-bottom:2px;">Parsed Recipient Queue:</div>
+        <div class="sec-bulk-table-container">
+          <table class="sec-bulk-table" id="secBulkTable">
+            <thead>
+              <tr>
+                <th style="width:36px;">#</th>
+                <th>Recipient Email</th>
+                <th>Name ({{name}})</th>
+                <th>Personal Message ({{message}})</th>
+                <th style="text-align:right; width:80px;">Preview</th>
+              </tr>
+            </thead>
+            <tbody id="secBulkTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   `;
   box.append(recipField);
 
+  // Wire Recipient Mode Tabs
+  const tabSingle = recipField.querySelector('#secTabSingleRecipBtn');
+  const tabBulk = recipField.querySelector('#secTabBulkRecipBtn');
+  const paneSingle = recipField.querySelector('#secSingleRecipPane');
+  const paneBulk = recipField.querySelector('#secBulkRecipPane');
+  const bulkTextarea = recipField.querySelector('#f_bulk_recipients');
+  const bulkTableWrap = recipField.querySelector('#secBulkTableWrap');
+  const bulkTableBody = recipField.querySelector('#secBulkTableBody');
+  const bulkCountBadge = recipField.querySelector('#secBulkCountBadge');
+  const bulkFileInput = recipField.querySelector('#secBulkFileInput');
+  const loadSampleBtn = recipField.querySelector('#secLoadSampleCsvBtn');
+
+  window._secRecipMode = 'single';
+  tabSingle.onclick = () => {
+    window._secRecipMode = 'single';
+    tabSingle.classList.add('is-active'); tabBulk.classList.remove('is-active');
+    paneSingle.style.display = 'block'; paneBulk.style.display = 'none';
+  };
+  tabBulk.onclick = () => {
+    window._secRecipMode = 'bulk';
+    tabBulk.classList.add('is-active'); tabSingle.classList.remove('is-active');
+    paneSingle.style.display = 'none'; paneBulk.style.display = 'flex';
+    updateBulkRecipientTable();
+  };
+
+  function updateBulkRecipientTable(){
+    const list = parseBulkRecipients(bulkTextarea.value);
+    window.parsedBulkRecipients = list;
+    bulkCountBadge.textContent = `${list.length} recipient${list.length === 1 ? '' : 's'} detected`;
+    
+    if(!list.length){
+      bulkTableWrap.style.display = 'none';
+      return;
+    }
+    bulkTableWrap.style.display = 'block';
+    bulkTableBody.innerHTML = '';
+    list.forEach((r, idx) => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td style="color:var(--color-ink-muted); font-family:var(--font-mono);">${idx + 1}</td>
+        <td><code style="font-family:var(--font-mono); font-weight:600;">${r.email}</code></td>
+        <td>${r.name ? `<span style="color:var(--color-ink);">${r.name}</span>` : '<span style="color:var(--color-ink-muted); font-style:italic;">None</span>'}</td>
+        <td style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${r.message ? `<span style="color:var(--color-ink-2);">${r.message}</span>` : '<span style="color:var(--color-ink-muted); font-style:italic;">None</span>'}</td>
+        <td style="text-align:right;">
+          <button type="button" class="btn-sm" onclick="openRecipientPreviewModal(${idx})" style="font-size:11px; padding:2px 6px; background:var(--color-paper); border:1px solid var(--color-rule); border-radius:4px; cursor:pointer;">👁️ Preview</button>
+        </td>
+      `;
+      bulkTableBody.append(tr);
+    });
+  }
+
+  bulkTextarea.addEventListener('input', updateBulkRecipientTable);
+
+  loadSampleBtn.onclick = () => {
+    bulkTextarea.value = 
+`email,name,message
+sandman69@gmail.com,Mr. Sand Man,Your confidential quarterly audit report
+ironman555@gmail.com,Robert Stark,Updated project blueprint
+captain777@gmail.com,Steve Rogers,Shield maintenance schedule`;
+    updateBulkRecipientTable();
+    toast('Loaded sample bulk recipients', 'ok');
+  };
+
+  bulkFileInput.onchange = () => {
+    const file = bulkFileInput.files && bulkFileInput.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      bulkTextarea.value = ev.target.result;
+      updateBulkRecipientTable();
+      toast(`Imported ${file.name}`, 'ok');
+    };
+    reader.readAsText(file);
+  };
+
+  // 5. Subject Line with Dynamic Placeholder Chips
   const subjField = document.createElement('div'); subjField.className = 'field wide';
   subjField.innerHTML = `
-    <label for="f_email_subject">Email Subject</label>
-    <input type="text" id="f_email_subject" placeholder="Confidential Document">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:2px;">
+      <label for="f_email_subject" style="margin:0;">Email Subject</label>
+      <div style="display:flex; gap:4px;">
+        <span class="sec-chip-placeholder" onclick="insertPlaceholderAtCursor('f_email_subject', '{{name}}')" title="Insert {{name}}">+ {{name}}</span>
+        <span class="sec-chip-placeholder" onclick="insertPlaceholderAtCursor('f_email_subject', '{{doc_name}}')" title="Insert {{doc_name}}">+ {{doc_name}}</span>
+      </div>
+    </div>
+    <input type="text" id="f_email_subject" placeholder="Confidential Document for {{name}}">
     <span class="hint">Subject line for Email #1. Email #2 prefixes [Decryption Key].</span>
   `;
   box.append(subjField);
 
-  // 5. Rich Email #1 Content Box with Tabbed Live Preview & Direct HTML File Dropzone
+  // 6. Rich Email #1 Content Box with Tabbed Live Preview, Tag Inserters & Direct HTML File Dropzone
   const contentField = document.createElement('div'); contentField.className = 'field wide';
   contentField.innerHTML = `
-    <label for="f_email_body_html">Email #1 Message & Body (HTML / Text)</label>
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
+      <label for="f_email_body_html" style="margin:0;">Email #1 Message & Body (HTML / Text)</label>
+      <div style="display:flex; gap:4px; flex-wrap:wrap;">
+        <span class="sec-chip-placeholder" onclick="insertPlaceholderAtCursor('f_email_body_html', '{{name}}')" title="Insert recipient name">+ {{name}}</span>
+        <span class="sec-chip-placeholder" onclick="insertPlaceholderAtCursor('f_email_body_html', '{{message}}')" title="Insert personal note">+ {{message}}</span>
+        <span class="sec-chip-placeholder" onclick="insertPlaceholderAtCursor('f_email_body_html', '{{email}}')" title="Insert recipient email">+ {{email}}</span>
+        <span class="sec-chip-placeholder" onclick="insertPlaceholderAtCursor('f_email_body_html', '{{doc_name}}')" title="Insert PDF filename">+ {{doc_name}}</span>
+      </div>
+    </div>
     <div class="sec-content-box" id="secContentBox">
       <div class="sec-content-tabs">
         <div class="sec-tab-group">
@@ -2011,7 +2385,7 @@ function buildSecureEmailFields(box){
       </div>
       
       <div id="secEditPane">
-        <textarea id="f_email_body_html" class="sec-body-textarea" placeholder="Optional: Enter custom email body or drop/paste HTML template here..."></textarea>
+        <textarea id="f_email_body_html" class="sec-body-textarea" placeholder="Optional: Enter custom email body or drop/paste HTML template here (supports {{name}}, {{message}}, {{doc_name}})..."></textarea>
         <span class="hint" style="margin-top:4px; display:block;">Supports HTML tags (&lt;p&gt;, &lt;b&gt;, &lt;table&gt;) or plain text.</span>
       </div>
       
@@ -2096,17 +2470,17 @@ function buildSecureEmailFields(box){
     }
   });
 
-  // 6. Password Generator Widget
+  // 7. Password Generator Widget
   if(!generatedPassword) generateStrongPassword();
   const pwField = document.createElement('div'); pwField.className = 'field wide';
   pwField.innerHTML = `
     <label>PDF Decryption Password</label>
     <div style="display:flex; gap:12px; margin:4px 0 8px; font-size:13px;">
       <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:normal;">
-        <input type="radio" name="pw_mode_radio" value="random" checked> Auto-generate strong password
+        <input type="radio" name="pw_mode_radio" value="random" checked> Auto-generate strong password per recipient
       </label>
       <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:normal;">
-        <input type="radio" name="pw_mode_radio" value="manual"> Specify custom password
+        <input type="radio" name="pw_mode_radio" value="manual"> Specify fixed password
       </label>
     </div>
     <div id="secRandomPwWrap">
@@ -2148,7 +2522,7 @@ function buildSecureEmailFields(box){
     }).catch(() => {});
   };
 
-  // 7. Email #2 Customization Card & Delay Setting
+  // 8. Email #2 Customization Card & Delay Setting
   const e2Field = document.createElement('div'); e2Field.className = 'field wide';
   e2Field.innerHTML = `
     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
@@ -2164,12 +2538,13 @@ function buildSecureEmailFields(box){
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:2px;">
           <label for="f_email2_body">Email #2 Body Template</label>
           <div>
-            <span class="sec-chip-placeholder" onclick="insertE2Placeholder('{{password}}')" title="Click to insert {{password}} placeholder">+ {{password}}</span>
-            <span class="sec-chip-placeholder" onclick="insertE2Placeholder('{{doc_name}}')" title="Click to insert {{doc_name}} placeholder">+ {{doc_name}}</span>
+            <span class="sec-chip-placeholder" onclick="insertPlaceholderAtCursor('f_email2_body', '{{name}}')" title="Insert recipient name">+ {{name}}</span>
+            <span class="sec-chip-placeholder" onclick="insertPlaceholderAtCursor('f_email2_body', '{{password}}')" title="Insert {{password}} placeholder">+ {{password}}</span>
+            <span class="sec-chip-placeholder" onclick="insertPlaceholderAtCursor('f_email2_body', '{{doc_name}}')" title="Insert {{doc_name}} placeholder">+ {{doc_name}}</span>
           </div>
         </div>
         <textarea id="f_email2_body" style="min-height:90px; font-family:var(--font-mono); font-size:12px;" placeholder="Your password to open the protected PDF ({{doc_name}}) is:&#10;&#10;{{password}}&#10;&#10;Please keep this password secure."></textarea>
-        <span class="hint">Use {{password}} and {{doc_name}} placeholders to dynamically embed the decryption key.</span>
+        <span class="hint">Use {{name}}, {{password}}, and {{doc_name}} placeholders to dynamically embed the decryption key.</span>
       </div>
       <div class="field">
         <label for="f_delay_seconds">Dispatch Delay between Email #1 and Email #2</label>
@@ -2192,7 +2567,7 @@ function buildSecureEmailFields(box){
     toggleE2Btn.textContent = isHidden ? 'Hide Email #2 Options' : 'Customize Email #2';
   };
 
-  // 8. Two-Step Delivery Timeline Card
+  // 9. Two-Step Delivery Timeline Card
   const timeline = document.createElement('div'); timeline.className = 'sec-timeline';
   timeline.innerHTML = `
     <div class="sec-timeline-head">Two-Step Secure Dispatch Workflow</div>
@@ -2334,6 +2709,149 @@ const fmt = b => b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(0) + ' K
 
 /* ------------------------------------------------------------ submit --- */
 let busy = false, elapsedTimer = null, lastEmailSmtpConfig = null;
+
+async function runBulkEmailDispatch({ files, fdBase, recipients, rawSubject, rawHtml, rawE2Subject, rawE2Body, delaySeconds, pwMode, customPassword, customFind, customReplaceWith, t0 }){
+  const res = document.getElementById('result');
+  const prog = document.getElementById('progress');
+  const pdf = files.find(f => /\.pdf$/i.test(f.name));
+  if(!pdf) throw new Error('Secure Email Dispatch needs a PDF file.');
+  if(!recipients || !recipients.length) throw new Error('No valid recipients found in bulk list.');
+
+  prog.hidden = true;
+  res.className = 'result on';
+  res.innerHTML = `
+    <div class="r-top">
+      <span class="r-check" id="secBatchIcon" style="color:var(--color-accent-solid);"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px; height:18px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
+      <div>
+        <b id="secBatchTitle">Batch Dispatch in Progress…</b>
+        <small id="secBatchSubtitle">Initializing secure delivery queue for ${recipients.length} recipients</small>
+      </div>
+    </div>
+    <div class="sec-progress-wrap" id="secBatchProgressWrap">
+      <div style="display:flex; justify-content:space-between; font-weight:600; font-size:12px;">
+        <span id="secBatchProgLabel">0 of ${recipients.length} processed</span>
+        <span id="secBatchProgPct">0%</span>
+      </div>
+      <div class="sec-progress-bar-bg">
+        <div class="sec-progress-bar-fill" id="secBatchProgFill"></div>
+      </div>
+      <div id="secBatchCurrentStatus" style="font-size:12px; color:var(--color-ink-muted); font-family:var(--font-mono);">Preparing batch…</div>
+      <div id="secBatchLog" style="max-height:160px; overflow-y:auto; font-family:var(--font-mono); font-size:11.5px; display:flex; flex-direction:column; gap:4px; margin-top:6px; border-top:1px solid var(--color-rule); padding-top:6px;"></div>
+    </div>
+  `;
+
+  const progFill = document.getElementById('secBatchProgFill');
+  const progLabel = document.getElementById('secBatchProgLabel');
+  const progPct = document.getElementById('secBatchProgPct');
+  const statusEl = document.getElementById('secBatchCurrentStatus');
+  const logEl = document.getElementById('secBatchLog');
+
+  let successCount = 0;
+  let partialCount = 0;
+  let failCount = 0;
+
+  for(let i = 0; i < recipients.length; i++){
+    const r = recipients[i];
+    const pct = Math.round((i / recipients.length) * 100);
+    if(progFill) progFill.style.width = pct + '%';
+    if(progLabel) progLabel.textContent = `${i} of ${recipients.length} processed`;
+    if(progPct) progPct.textContent = `${pct}%`;
+    if(statusEl) statusEl.textContent = `[${i + 1}/${recipients.length}] Encrypting and sending to ${r.email}${r.name ? ` (${r.name})` : ''}…`;
+
+    const recipientPw = pwMode === 'random' ? generateRandomPasswordString(16) : (customPassword || generateRandomPasswordString(16));
+    const recipientSubject = renderPersonalizedTemplate(rawSubject || pdf.name, r, pdf.name, recipientPw, customFind, customReplaceWith);
+    const recipientHtml = renderPersonalizedTemplate(rawHtml, r, pdf.name, recipientPw, customFind, customReplaceWith);
+    const recipientE2Subject = renderPersonalizedTemplate(rawE2Subject, r, pdf.name, recipientPw, customFind, customReplaceWith);
+    const recipientE2Body = renderPersonalizedTemplate(rawE2Body, r, pdf.name, recipientPw, customFind, customReplaceWith);
+
+    const fd = new FormData();
+    for(let [k, v] of fdBase.entries()) fd.append(k, v);
+    fd.set('recipient_email', r.email);
+    fd.set('email_subject', recipientSubject);
+    fd.set('email_body_html', recipientHtml);
+    fd.set('email2_subject', recipientE2Subject);
+    fd.set('email2_body', recipientE2Body);
+    fd.set('custom_password', recipientPw);
+    fd.set('delay_seconds', String(delaySeconds || 2.5));
+
+    try{
+      let receiptObj = null;
+      if(isStatic){
+        receiptObj = await window.runStaticSecureEmail(files, fd);
+      } else {
+        const resp = await fetch('/api/t/email-secure', { method: 'POST', body: fd, headers: apiHeaders() });
+        receiptObj = await resp.json();
+      }
+
+      if(receiptObj && receiptObj.status === 'partial_failure'){
+        partialCount++;
+        if(logEl) logEl.innerHTML += `<div style="color:var(--color-err);">⚠️ [${i + 1}] ${r.email}: Encrypted PDF sent, password email failed</div>`;
+        if(window.SquishVault){
+          await SquishVault.addDispatchRecord({
+            recipient: r.email,
+            pdf_filename: pdf.name,
+            subject: recipientSubject,
+            status: 'partial_failure',
+            password: recipientPw,
+            error: receiptObj.error || ''
+          });
+        }
+      } else {
+        successCount++;
+        if(logEl) logEl.innerHTML += `<div style="color:var(--color-ok-solid);">✓ [${i + 1}] ${r.email}: Dual secure emails delivered (${r.name || 'Recipient'})</div>`;
+        if(window.SquishVault){
+          await SquishVault.addDispatchRecord({
+            recipient: r.email,
+            pdf_filename: pdf.name,
+            subject: recipientSubject,
+            status: 'success',
+            password: recipientPw
+          });
+        }
+      }
+    }catch(err){
+      failCount++;
+      if(logEl) logEl.innerHTML += `<div style="color:var(--color-err);">✗ [${i + 1}] ${r.email}: ${err.message}</div>`;
+      if(window.SquishVault){
+        await SquishVault.addDispatchRecord({
+          recipient: r.email,
+          pdf_filename: pdf.name,
+          subject: recipientSubject,
+          status: 'failed',
+          password: recipientPw,
+          error: err.message
+        });
+      }
+    }
+    if(logEl) logEl.scrollTop = logEl.scrollHeight;
+
+    if(i < recipients.length - 1){
+      await new Promise(res => setTimeout(res, 1000));
+    }
+  }
+
+  if(progFill) progFill.style.width = '100%';
+  if(progLabel) progLabel.textContent = `${recipients.length} of ${recipients.length} completed`;
+  if(progPct) progPct.textContent = '100%';
+  const totalSecs = ((Date.now() - t0) / 1000).toFixed(1);
+
+  const iconEl = document.getElementById('secBatchIcon');
+  if(iconEl) iconEl.innerHTML = svg(failCount === 0 && partialCount === 0 ? UI.check : UI.warning);
+  const titleEl = document.getElementById('secBatchTitle');
+  if(titleEl) titleEl.textContent = `Batch Completed: ${successCount} Delivered`;
+  const subEl = document.getElementById('secBatchSubtitle');
+  if(subEl) subEl.textContent = `Processed ${recipients.length} recipients in ${totalSecs}s (${successCount} successful, ${partialCount} partial, ${failCount} failed)`;
+  if(statusEl) statusEl.textContent = `Completed in ${totalSecs}s. All dispatches logged to Email Dispatch History below.`;
+
+  res.innerHTML += `
+    <div class="r-actions" style="margin-top:10px;">
+      <button type="button" class="r-again" onclick="resetTool()">Send Another Batch</button>
+    </div>
+  `;
+  renderDispatchHistoryTable();
+  toast(`Batch completed: ${successCount}/${recipients.length} emails delivered`, successCount > 0 ? 'ok' : 'err');
+}
+
 async function submit(){
   const noInput = current.min_files > 0 ? !files.length : (!files.length && !(document.getElementById('f_md_text') || {}).value?.trim());
   if(busy || noInput) return;
@@ -2354,14 +2872,8 @@ async function submit(){
   if(current.key === 'email-secure'){
     const selEl = document.getElementById('f_smtp_profile_select');
     const profId = selEl ? selEl.value : '__manual__';
-    // Remembered so a later "Resend Decryption Key" (after a partial
-    // failure) can reconnect without asking the vault to be unlocked again
-    // or the manual fields to be re-typed. Cleared whenever the tool result
-    // resets, so a stale config can't be reused for an unrelated send.
     lastEmailSmtpConfig = null;
     if(profId.startsWith('server:')){
-      // Server-side .env profile: the password is resolved on the server
-      // and never sent to (or held by) the browser at all.
       const sid = profId.slice(7);
       fd.append('smtp_server_profile_id', sid);
       lastEmailSmtpConfig = { __server_profile_id: sid };
@@ -2383,6 +2895,38 @@ async function submit(){
         username: u?.value || '', password: pw?.value || '',
         from_name: fn?.value || '', security: sec?.value || 'starttls'
       };
+    }
+
+    const isBulk = window._secRecipMode === 'bulk';
+    if(isBulk){
+      const recips = window.parsedBulkRecipients || [];
+      if(!recips.length){
+        clearInterval(elapsedTimer);
+        busy = false; prog.hidden = true; go.disabled = false; go.innerHTML = svg(UI.run) + `<span>Run ${current.name}</span>`;
+        toast('No valid recipients detected. Please input recipient emails or import a CSV/JSON file.', 'err');
+        return;
+      }
+      try{
+        await runBulkEmailDispatch({
+          files, fdBase: fd, recipients: recips,
+          rawSubject: document.getElementById('f_email_subject')?.value || '',
+          rawHtml: document.getElementById('f_email_body_html')?.value || '',
+          rawE2Subject: document.getElementById('f_email2_subject')?.value || '',
+          rawE2Body: document.getElementById('f_email2_body')?.value || '',
+          delaySeconds: parseFloat(document.getElementById('f_delay_seconds')?.value || 2.5),
+          pwMode: document.getElementById('f_password_mode')?.value || 'random',
+          customPassword: document.getElementById('f_custom_password')?.value || '',
+          customFind: document.getElementById('f_bulk_custom_find')?.value || '',
+          customReplaceWith: document.getElementById('f_bulk_custom_replace')?.value || 'name',
+          t0
+        });
+      }catch(e){
+        toast('Bulk send error: ' + e.message, 'err');
+      }finally{
+        clearInterval(elapsedTimer);
+        busy = false; prog.hidden = true; go.disabled = false; go.innerHTML = svg(UI.run) + `<span>Run ${current.name}</span>`;
+      }
+      return;
     }
 
     const recip = document.getElementById('f_recipient_email'); if(recip && recip.value) fd.append('recipient_email', recip.value);
