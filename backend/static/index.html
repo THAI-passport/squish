@@ -440,6 +440,11 @@ footer code { font-family:var(--font-mono); }
 .vault-close:hover { color:var(--color-ink); background:var(--color-rule); }
 
 .vault-body { padding:20px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:16px; }
+.vault-tab-btn {
+  background:none; border:0; border-bottom:2px solid transparent; padding:8px 4px; margin-bottom:-1px;
+  font-size:13px; font-weight:600; color:var(--color-ink-muted); cursor:pointer;
+}
+.vault-tab-btn.is-active { color:var(--color-accent-solid); border-bottom-color:var(--color-accent-solid); }
 
 /* Vault PIN Card */
 .vault-pin-card {
@@ -878,6 +883,12 @@ footer code { font-family:var(--font-mono); }
     </div>
 
     <div class="vault-body">
+      <div class="vault-tabbar" style="display:flex; gap:6px; border-bottom:1px solid var(--color-rule); margin-bottom:4px;">
+        <button type="button" id="vaultTabBrowserBtn" class="vault-tab-btn is-active" onclick="switchVaultTab('browser')">Browser Vault</button>
+        <button type="button" id="vaultTabServerBtn" class="vault-tab-btn" onclick="switchVaultTab('server')">Server (.env)</button>
+      </div>
+
+      <div id="vaultBrowserPane">
       <!-- Screen 1: Master PIN setup or unlock -->
       <div id="vaultPinView" class="vault-pin-card">
         <div class="vault-icon-large">
@@ -956,6 +967,81 @@ footer code { font-family:var(--font-mono); }
           <button type="button" class="vault-wipe-btn" onclick="handleWipeVault()">Wipe All Credentials</button>
         </div>
       </div>
+      </div><!-- /vaultBrowserPane -->
+
+      <div id="vaultServerPane" hidden style="display:flex; flex-direction:column; gap:16px;">
+        <div class="vault-add-box">
+          <h4 style="margin:0 0 4px;">Server API Key</h4>
+          <p class="hint" style="margin:0 0 8px;">Server-side profiles are stored in this server's <code>.env</code> file and require <code>API_KEY</code> to be set on the server. Enter that same key here so the browser can talk to it. Stored only in this browser's local storage.</p>
+          <div class="vaf-field">
+            <label for="vaultApiKeyInput">X-API-Key</label>
+            <input type="password" id="vaultApiKeyInput" placeholder="Server's API_KEY value" autocomplete="off">
+          </div>
+          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+            <button type="button" class="vpc-btn" onclick="clearApiKey()">Clear</button>
+            <button type="button" class="btn--primary" onclick="saveApiKeyFromInput()">Save Key</button>
+          </div>
+          <div id="vaultApiKeyStatus" style="font-size:12px; font-family:var(--font-mono); margin-top:6px;"></div>
+        </div>
+
+        <div class="vault-profiles-head">
+          <h4>Server Profiles</h4>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span class="v-count" id="serverProfileCount">0 / 5</span>
+            <button type="button" class="vpc-btn" onclick="loadServerProfiles()">Refresh</button>
+          </div>
+        </div>
+
+        <div id="serverProfilesList" style="display:flex; flex-direction:column; gap:10px;"></div>
+
+        <div class="vault-add-box">
+          <h4 id="serverAddTitle">Add New Server Profile</h4>
+          <form id="serverAddForm" onsubmit="handleAddServerProfile(event)" style="display:flex; flex-direction:column; gap:10px;">
+            <div class="vaf-field">
+              <label for="svaf_name">Profile Nickname</label>
+              <input type="text" id="svaf_name" placeholder="e.g. Work Office 365, Internal Relay" required>
+            </div>
+            <div class="vaf-grid">
+              <div class="vaf-field">
+                <label for="svaf_server">SMTP Server Host</label>
+                <input type="text" id="svaf_server" placeholder="smtp.office365.com or 10.x.x.x" required>
+              </div>
+              <div class="vaf-field">
+                <label for="svaf_port">Port</label>
+                <input type="number" id="svaf_port" value="587" min="1" max="65535" required>
+              </div>
+            </div>
+            <div class="vaf-field">
+              <label for="svaf_username">Sender Email (Username)</label>
+              <input type="email" id="svaf_username" placeholder="sender@company.com" required>
+            </div>
+            <div class="vaf-field">
+              <label for="svaf_password">SMTP Password / App Password (Insert-Only)</label>
+              <input type="password" id="svaf_password" placeholder="••••••••••••" required>
+            </div>
+            <div class="vaf-field">
+              <label for="svaf_from_name">Display Name (MAIL_FROM_NAME)</label>
+              <input type="text" id="svaf_from_name" placeholder="e.g. Finance Team, Legal Dispatch">
+            </div>
+            <div class="vaf-field">
+              <label for="svaf_security">Connection Security</label>
+              <select id="svaf_security">
+                <option value="starttls">STARTTLS (Recommended for Port 587)</option>
+                <option value="ssl">SSL / TLS (Direct on Port 465)</option>
+                <option value="plain">Plain / Unencrypted (Port 25 Relay)</option>
+              </select>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:6px;">
+              <button type="submit" class="btn--primary" id="svafSaveBtn">Save Profile</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="vault-foot">
+          <span style="font-size:11.5px; color:var(--color-ink-muted);">Stored server-side in .env — insert-only, never returned in plaintext.</span>
+          <button type="button" class="vault-wipe-btn" onclick="handleWipeServerProfiles()">Wipe All Server Credentials</button>
+        </div>
+      </div><!-- /vaultServerPane -->
     </div>
   </div>
 </div>
@@ -980,6 +1066,23 @@ footer code { font-family:var(--font-mono); }
 
 <script>
 'use strict';
+
+/* ---------------------------------------------------------- API key --- */
+// Only relevant if this deployment sets the API_KEY env var (see README).
+// When set, the server requires X-API-Key on every /api/* request except
+// /api/health -- this key is what lets the page itself keep working, and
+// what lets the server-side .env SMTP profile endpoints (which ALWAYS
+// require API_KEY, regardless of whether the rest of the API is gated)
+// be reachable at all. Stored in localStorage: it's the operator's own key
+// for their own server, entered once, same trust model as any other
+// self-hosted admin tool.
+const API_KEY_STORAGE = 'squish_api_key';
+function getApiKey(){ try{ return localStorage.getItem(API_KEY_STORAGE) || ''; }catch{ return ''; } }
+function setApiKey(k){ try{ if(k) localStorage.setItem(API_KEY_STORAGE, k); else localStorage.removeItem(API_KEY_STORAGE); }catch{} }
+function apiHeaders(extra){
+  const key = getApiKey();
+  return key ? { ...(extra||{}), 'X-API-Key': key } : (extra || {});
+}
 
 /* ------------------------------------------------------------- icons --- */
 function svg(inner, cls){
@@ -1517,6 +1620,11 @@ function open_(key){
   picker.accept = current.accept; picker.multiple = !!current.multi; picker.value = '';
 
   buildFields(); refreshOutputName();
+  if(key === 'email-secure' && getApiKey()){
+    // Background-refresh server profiles so they appear in the dropdown
+    // without requiring a trip through the vault modal first.
+    loadServerProfiles().then(() => { if(current && current.key === 'email-secure') buildFields(); });
+  }
 
   // consume any files dropped on the home screen
   if(pending.length){ const p = pending; pending = []; ingest(p, true); }
@@ -1641,16 +1749,18 @@ function insertE2Placeholder(ph){
 function buildSecureEmailFields(box){
   const isUnlocked = window.SquishVault && SquishVault.isUnlocked();
   const profiles = isUnlocked ? SquishVault.getMaskedProfiles() : [];
-  
+  const serverProfiles = getApiKey() ? _lastServerProfiles : [];
+  const anyProfiles = profiles.length > 0 || serverProfiles.length > 0;
+
   // 1. Vault status banner
   const banner = document.createElement('div');
   banner.className = 'sec-vault-banner ' + (isUnlocked ? 'is-unlocked' : 'is-locked');
   banner.innerHTML = `
     <div>
-      <b>${isUnlocked ? `Vault Unlocked (${profiles.length} saved profile${profiles.length === 1 ? '' : 's'})` : 'Vault Locked'}</b>
+      <b>${isUnlocked ? `Vault Unlocked (${profiles.length} saved profile${profiles.length === 1 ? '' : 's'})` : 'Vault Locked'}${serverProfiles.length ? ` · ${serverProfiles.length} server profile${serverProfiles.length === 1 ? '' : 's'}` : ''}</b>
       <div style="font-size:12px; opacity:0.9;">${isUnlocked ? 'Stored credentials are encrypted with AES-256-GCM.' : 'Unlock your vault to use saved SMTP accounts, or enter one-time settings below.'}</div>
     </div>
-    <button type="button" class="btn-sm" onclick="openVaultModal()">${isUnlocked ? 'Manage Vault' : 'Unlock Vault'}</button>
+    <button type="button" class="btn-sm" onclick="openVaultModal()">Manage Credentials</button>
   `;
   box.append(banner);
 
@@ -1659,8 +1769,9 @@ function buildSecureEmailFields(box){
   profField.innerHTML = `
     <label for="f_smtp_profile_select">SMTP Account / Relay</label>
     <select id="f_smtp_profile_select">
-      ${profiles.map(p => `<option value="${p.id}">Saved: ${p.name} (${p.username})</option>`).join('')}
-      <option value="__manual__"${profiles.length === 0 ? ' selected' : ''}>Manual / One-Time SMTP Parameters</option>
+      ${profiles.map(p => `<option value="${p.id}">Saved (browser): ${p.name} (${p.username})</option>`).join('')}
+      ${serverProfiles.map(p => `<option value="server:${p.id}">Saved (server): ${p.name} (${p.username})</option>`).join('')}
+      <option value="__manual__"${anyProfiles ? '' : ' selected'}>Manual / One-Time SMTP Parameters</option>
     </select>
     <span class="hint">Credentials are transmitted strictly for this dispatch and never stored in plain text.</span>
   `;
@@ -1670,7 +1781,7 @@ function buildSecureEmailFields(box){
   const manualBox = document.createElement('div');
   manualBox.id = 'secManualBox';
   manualBox.className = 'vault-add-box';
-  manualBox.style.display = (profiles.length === 0 || !isUnlocked) ? 'flex' : 'none';
+  manualBox.style.display = anyProfiles ? 'none' : 'flex';
   manualBox.innerHTML = `
     <h4 style="margin:0; font-size:13px; font-weight:600; color:var(--color-ink);">One-Time SMTP Parameters</h4>
     <div class="vaf-grid">
@@ -2081,7 +2192,13 @@ async function submit(){
     // or the manual fields to be re-typed. Cleared whenever the tool result
     // resets, so a stale config can't be reused for an unrelated send.
     lastEmailSmtpConfig = null;
-    if(profId !== '__manual__' && window.SquishVault && SquishVault.isUnlocked()){
+    if(profId.startsWith('server:')){
+      // Server-side .env profile: the password is resolved on the server
+      // and never sent to (or held by) the browser at all.
+      const sid = profId.slice(7);
+      fd.append('smtp_server_profile_id', sid);
+      lastEmailSmtpConfig = { __server_profile_id: sid };
+    }else if(profId !== '__manual__' && window.SquishVault && SquishVault.isUnlocked()){
       try{
         const pObj = SquishVault.getProfileForDispatch(profId);
         fd.append('smtp_profile_json', JSON.stringify(pObj));
@@ -2140,7 +2257,7 @@ async function submit(){
       blob = result.blob;
       name = result.name || (current.key + '.out');
     } else {
-      const r = await fetch('/api/t/' + current.key, {method:'POST', body:fd});
+      const r = await fetch('/api/t/' + current.key, {method:'POST', body:fd, headers: apiHeaders()});
       if(!r.ok){
         let msg = 'HTTP ' + r.status;
         try{ const j = await r.json(); if(j.detail) msg = j.detail; }catch{}
@@ -2231,7 +2348,8 @@ function resetTool(){
    generating a new one that would no longer match. */
 async function resendDecryptionKey(){
   const ctx = window._pendingResend;
-  if(!ctx || !ctx.smtp || !ctx.smtp.server){
+  const hasServerProfile = ctx && ctx.smtp && ctx.smtp.__server_profile_id;
+  if(!ctx || !ctx.smtp || (!hasServerProfile && !ctx.smtp.server)){
     toast('Nothing to resend — the SMTP details for this send are no longer available.', 'err');
     return;
   }
@@ -2240,9 +2358,10 @@ async function resendDecryptionKey(){
   try{
     const r = await fetch('/api/smtp/resend-key', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
-        smtp: ctx.smtp, recipient: ctx.recipient, password: ctx.password,
+        ...(hasServerProfile ? { profile_id: ctx.smtp.__server_profile_id } : { smtp: ctx.smtp }),
+        recipient: ctx.recipient, password: ctx.password,
         pdf_filename: ctx.pdf_filename, subject: ctx.subject,
         email2_subject: ctx.email2_subject, email2_body: ctx.email2_body
       })
@@ -2450,6 +2569,188 @@ function closeVaultModal(){
   }
 }
 
+/* --------------------------------------------------- vault tab switch --- */
+function switchVaultTab(which){
+  const browserPane = document.getElementById('vaultBrowserPane');
+  const serverPane = document.getElementById('vaultServerPane');
+  const browserBtn = document.getElementById('vaultTabBrowserBtn');
+  const serverBtn = document.getElementById('vaultTabServerBtn');
+  if(which === 'server'){
+    browserPane.hidden = true; serverPane.hidden = false;
+    browserBtn.classList.remove('is-active'); serverBtn.classList.add('is-active');
+    document.getElementById('vaultApiKeyInput').value = getApiKey();
+    loadServerProfiles();
+  } else {
+    browserPane.hidden = false; serverPane.hidden = true;
+    browserBtn.classList.add('is-active'); serverBtn.classList.remove('is-active');
+  }
+}
+
+/* --------------------------------------------- server (.env) profiles --- */
+function saveApiKeyFromInput(){
+  const el = document.getElementById('vaultApiKeyInput');
+  setApiKey(el.value.trim());
+  const status = document.getElementById('vaultApiKeyStatus');
+  status.style.color = 'var(--color-ok-solid)';
+  status.textContent = getApiKey() ? 'Saved — this key will be sent on every request from now on.' : 'Cleared.';
+  toast(getApiKey() ? 'API key saved' : 'API key cleared', 'ok');
+  loadServerProfiles();
+  if(current && current.key === 'email-secure') buildFields();
+}
+
+function clearApiKey(){
+  setApiKey('');
+  document.getElementById('vaultApiKeyInput').value = '';
+  const status = document.getElementById('vaultApiKeyStatus');
+  status.style.color = 'var(--color-ink-muted)';
+  status.textContent = 'Cleared. Requests will no longer send X-API-Key.';
+  toast('API key cleared', 'ok');
+  document.getElementById('serverProfilesList').innerHTML = '';
+  document.getElementById('serverProfileCount').textContent = '0 / 5';
+  if(current && current.key === 'email-secure') buildFields();
+}
+
+let _lastServerProfiles = [];
+async function loadServerProfiles(){
+  const list = document.getElementById('serverProfilesList');
+  const status = document.getElementById('vaultApiKeyStatus');
+  if(!getApiKey()){
+    list.innerHTML = '<p class="hint">Enter and save an API key above to manage server profiles.</p>';
+    document.getElementById('serverProfileCount').textContent = '0 / 5';
+    _lastServerProfiles = [];
+    return;
+  }
+  try{
+    const r = await fetch('/api/smtp/profiles', { headers: apiHeaders() });
+    if(r.status === 401 || r.status === 403){
+      const j = await r.json().catch(() => ({}));
+      status.style.color = 'var(--color-err)';
+      status.textContent = '✗ ' + (j.detail || 'Unauthorized — check your API key');
+      list.innerHTML = '';
+      document.getElementById('serverProfileCount').textContent = '0 / 5';
+      _lastServerProfiles = [];
+      return;
+    }
+    const j = await r.json();
+    _lastServerProfiles = j.profiles || [];
+    renderServerProfiles();
+  }catch(e){
+    list.innerHTML = `<p class="hint" style="color:var(--color-err);">Could not reach server: ${e.message}</p>`;
+  }
+}
+
+function renderServerProfiles(){
+  const list = document.getElementById('serverProfilesList');
+  const profiles = _lastServerProfiles;
+  document.getElementById('serverProfileCount').textContent = `${profiles.length} / 5`;
+  document.getElementById('serverAddForm').closest('.vault-add-box').style.display = profiles.length >= 5 ? 'none' : '';
+  if(!profiles.length){
+    list.innerHTML = '<p class="hint">No server profiles yet.</p>';
+    return;
+  }
+  list.innerHTML = '';
+  profiles.forEach(p => {
+    const card = document.createElement('div');
+    card.className = 'vault-profile-card';
+    card.innerHTML = `
+      <div class="vpc-head">
+        <b>${p.name}</b>
+        <div style="display:flex; gap:6px;">
+          <button type="button" class="vpc-btn" onclick="testServerProfile(${p.id})">Test</button>
+          <button type="button" class="vpc-btn" style="color:var(--color-err);" onclick="handleDeleteServerProfile(${p.id})">Delete</button>
+        </div>
+      </div>
+      <div class="vpc-grid">
+        <div class="vpc-item"><span>Server</span><code>${p.server}:${p.port}</code></div>
+        <div class="vpc-item"><span>Username</span><code>${p.username}</code></div>
+        <div class="vpc-item"><span>Password</span><code>${p.password || '(none)'}</code></div>
+        <div class="vpc-item">
+          <span>Display Name (Editable)</span>
+          <input type="text" value="${p.from_name || ''}" placeholder="None" style="padding:2px 6px; font-size:12px; border:1px solid var(--color-rule); border-radius:4px; background:var(--color-panel);" onchange="updateServerProfileMeta(${p.id}, this.value)">
+        </div>
+      </div>
+      <div id="serverTestStatus_${p.id}" style="font-size:11.5px; font-family:var(--font-mono); margin-top:2px;" hidden></div>
+    `;
+    list.append(card);
+  });
+}
+
+async function testServerProfile(id){
+  const statEl = document.getElementById('serverTestStatus_' + id);
+  if(statEl){ statEl.hidden = false; statEl.style.color = 'var(--color-accent-solid)'; statEl.textContent = 'Testing connection…'; }
+  try{
+    const r = await fetch('/api/smtp/test', {
+      method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ profile_id: id })
+    });
+    const res = await r.json();
+    if(statEl){
+      if(r.ok && res.ok){ statEl.style.color = 'var(--color-ok-solid)'; statEl.textContent = '✓ Connected successfully'; toast('SMTP connection verified!', 'ok'); }
+      else { statEl.style.color = 'var(--color-err)'; statEl.textContent = '✗ ' + (res.error || res.detail || 'Connection failed'); toast('SMTP connection failed', 'err'); }
+    }
+  }catch(e){
+    if(statEl){ statEl.style.color = 'var(--color-err)'; statEl.textContent = '✗ ' + e.message; }
+  }
+}
+
+async function handleAddServerProfile(e){
+  e.preventDefault();
+  const btn = document.getElementById('svafSaveBtn');
+  btn.disabled = true;
+  try{
+    const body = {
+      name: document.getElementById('svaf_name').value.trim(),
+      server: document.getElementById('svaf_server').value.trim(),
+      port: parseInt(document.getElementById('svaf_port').value, 10) || 587,
+      username: document.getElementById('svaf_username').value.trim(),
+      password: document.getElementById('svaf_password').value,
+      from_name: document.getElementById('svaf_from_name').value.trim(),
+      security: document.getElementById('svaf_security').value,
+    };
+    const r = await fetch('/api/smtp/profiles', {
+      method: 'POST', headers: apiHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(body)
+    });
+    const j = await r.json().catch(() => ({}));
+    if(!r.ok || !j.ok){ toast('Could not add profile: ' + (j.detail || 'unknown error'), 'err'); return; }
+    document.getElementById('serverAddForm').reset();
+    document.getElementById('svaf_port').value = 587;
+    toast('Server profile saved', 'ok');
+    await loadServerProfiles();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function updateServerProfileMeta(id, fromName){
+  try{
+    const r = await fetch('/api/smtp/profiles/' + id, {
+      method: 'PATCH', headers: apiHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ from_name: fromName })
+    });
+    if(!r.ok) throw new Error('update failed');
+    toast('Display name updated', 'ok');
+  }catch(e){ toast('Could not update: ' + e.message, 'err'); }
+}
+
+async function handleDeleteServerProfile(id){
+  try{
+    const r = await fetch('/api/smtp/profiles/' + id, { method: 'DELETE', headers: apiHeaders() });
+    if(!r.ok) throw new Error('delete failed');
+    toast('Profile deleted', 'ok');
+    await loadServerProfiles();
+  }catch(e){ toast('Could not delete: ' + e.message, 'err'); }
+}
+
+async function handleWipeServerProfiles(){
+  if(!confirm('Permanently delete ALL server-side SMTP profiles from .env? This cannot be undone.')) return;
+  try{
+    const r = await fetch('/api/smtp/wipe', { method: 'POST', headers: apiHeaders() });
+    if(!r.ok) throw new Error('wipe failed');
+    toast('All server credentials wiped', 'ok');
+    await loadServerProfiles();
+  }catch(e){ toast('Could not wipe: ' + e.message, 'err'); }
+}
+
 async function handleVaultPinSubmit(e){
   e.preventDefault();
   const pin = document.getElementById('vaultPinInput').value.trim();
@@ -2543,7 +2844,7 @@ async function testSavedProfile(profileId){
     const raw = SquishVault.getProfileForDispatch(profileId);
     const r = await fetch('/api/smtp/test', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ smtp: raw })
     });
     const res = await r.json();
@@ -2587,7 +2888,7 @@ async function handleTestNewProfile(){
   try{
     const r = await fetch('/api/smtp/test', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: apiHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         smtp: { server: s, port: parseInt(po, 10)||587, username: u, password: pw, security: sec }
       })
@@ -2686,7 +2987,7 @@ function paintStaticIcons(){
 async function boot(){
   paintStaticIcons();
   try{
-    const r = await fetch('/api/tools', { signal: AbortSignal.timeout(1500) });
+    const r = await fetch('/api/tools', { signal: AbortSignal.timeout(1500), headers: apiHeaders() });
     if(!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
     TOOLS = d.tools; LIMITS = d.limits;

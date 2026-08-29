@@ -222,6 +222,16 @@ async def smtp_test(request: Request):
         raise HTTPException(400, "invalid JSON payload")
 
     smtp_config = data.get("smtp") or data
+    if data.get("profile_id") is not None:
+        # Testing a saved server-side .env profile: the browser never has
+        # this password, so resolve it here rather than expecting the
+        # caller to supply one.
+        import env_manager
+        try:
+            smtp_config = env_manager.get_profile_for_dispatch(int(data["profile_id"]))
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(404, str(exc))
+
     import smtp_manager
     # smtplib does blocking socket I/O with up to a 15s timeout inside
     # test_smtp_connection. Calling it directly here would stall the whole
@@ -249,6 +259,13 @@ async def smtp_resend_key(request: Request):
         raise HTTPException(400, "invalid JSON payload")
 
     smtp_config = data.get("smtp") or {}
+    if not smtp_config.get("server") and data.get("profile_id") is not None:
+        import env_manager
+        try:
+            smtp_config = env_manager.get_profile_for_dispatch(int(data["profile_id"]))
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(404, str(exc))
+
     recipient = data.get("recipient") or ""
     password = data.get("password") or ""
     pdf_filename = data.get("pdf_filename") or data.get("doc_name") or "document.pdf"

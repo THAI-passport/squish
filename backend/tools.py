@@ -1090,6 +1090,17 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
         except Exception:
             pass
 
+    if not smtp_config.get("server") and p.get("smtp_server_profile_id"):
+        # A server-side .env profile (backend/env_manager.py). The password
+        # is resolved here, server-side, and never sent to or held by the
+        # browser -- unlike the browser Vault path, where the client already
+        # holds the decrypted profile and sends it in smtp_profile_json.
+        import env_manager
+        try:
+            smtp_config = env_manager.get_profile_for_dispatch(int(p["smtp_server_profile_id"]))
+        except (KeyError, ValueError) as exc:
+            raise ToolError(f"SMTP profile not found: {exc}")
+
     if not smtp_config.get("server"):
         smtp_config = {
             "server": str(p.get("mail_server") or os.environ.get("MAIL_SERVER") or ""),
