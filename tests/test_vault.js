@@ -114,7 +114,42 @@ async function runTests() {
   await Vault.deleteProfile(id1);
   assert.strictEqual(Vault.getProfilesCount(), 4);
 
-  // 10. Wipe All
+  // 10. Dispatch History & Encrypted Password Reveal
+  const rec1 = await Vault.addDispatchRecord({
+    recipient: 'client@example.com',
+    pdf_filename: 'Invoice_101_protected.pdf',
+    subject: 'Quarterly Invoice',
+    status: 'success',
+    password: 'ClientSecretPassword789!'
+  });
+  assert.ok(rec1.id.startsWith('disp_'));
+  assert.strictEqual(rec1.recipient, 'client@example.com');
+  assert.ok(rec1.encrypted_password !== null, 'Password is encrypted');
+  assert.notStrictEqual(rec1.encrypted_password.ciphertext, 'ClientSecretPassword789!', 'Password never stored in plaintext');
+
+  // Reveal password when unlocked
+  const revealed = await Vault.revealDispatchPassword(rec1.id);
+  assert.strictEqual(revealed, 'ClientSecretPassword789!', 'Password decrypted accurately');
+
+  // Lock vault and verify password cannot be revealed without PIN
+  Vault.lockVault();
+  assert.strictEqual(Vault.isUnlocked(), false);
+  let revealBlocked = false;
+  try {
+    await Vault.revealDispatchPassword(rec1.id);
+  } catch (err) {
+    revealBlocked = true;
+    assert.ok(err.message.includes('locked') || err.message.includes('Master PIN'));
+  }
+  assert.strictEqual(revealBlocked, true, 'Locked vault blocks password decryption');
+
+  // History list is still readable in plain for metadata
+  const hist = Vault.getDispatchHistory();
+  assert.strictEqual(hist.length, 1);
+  assert.strictEqual(hist[0].recipient, 'client@example.com');
+  assert.strictEqual(hist[0].pdf_filename, 'Invoice_101_protected.pdf');
+
+  // 11. Wipe All
   Vault.wipeAll();
   assert.strictEqual(Vault.isConfigured(), false, 'Vault wiped from storage');
   assert.strictEqual(Vault.isUnlocked(), false, 'Vault cleared from RAM');

@@ -15,7 +15,10 @@
   'use strict';
 
   const STORAGE_KEY = 'squish_smtp_vault';
+  const SESSION_PIN_KEY = 'squish_vault_session_pin';
+  const HISTORY_STORAGE_KEY = 'squish_dispatch_history';
   const MAX_PROFILES = 5;
+  const MAX_HISTORY_RECORDS = 50;
   const PBKDF2_ITERATIONS = 100000;
 
   // In-memory decrypted state (ephemeral in RAM only)
@@ -98,6 +101,22 @@
       return activeKey !== null && activeProfiles !== null;
     },
 
+    async tryAutoUnlock() {
+      if (this.isUnlocked()) return true;
+      if (!this.isConfigured()) return false;
+      try {
+        if (typeof sessionStorage === 'undefined') return false;
+        const savedPin = sessionStorage.getItem(SESSION_PIN_KEY);
+        if (savedPin) {
+          await this.unlockVault(savedPin);
+          return true;
+        }
+      } catch {
+        try { sessionStorage.removeItem(SESSION_PIN_KEY); } catch {}
+      }
+      return false;
+    },
+
     async initVault(masterPin) {
       if (!masterPin || masterPin.length < 4) {
         throw new Error('Master PIN must be at least 4 characters');
@@ -121,6 +140,11 @@
         created_at: new Date().toISOString()
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(vaultObj));
+      try {
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.setItem(SESSION_PIN_KEY, masterPin);
+        }
+      } catch {}
       return true;
     },
 
@@ -142,10 +166,20 @@
         const dec = new TextDecoder();
         activeProfiles = JSON.parse(dec.decode(decrypted));
         activeKey = key;
+        try {
+          if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.setItem(SESSION_PIN_KEY, masterPin);
+          }
+        } catch {}
         return true;
       } catch (err) {
         activeKey = null;
         activeProfiles = null;
+        try {
+          if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.removeItem(SESSION_PIN_KEY);
+          }
+        } catch {}
         throw new Error('Incorrect Master PIN');
       }
     },
@@ -153,12 +187,22 @@
     lockVault() {
       activeKey = null;
       activeProfiles = null;
+      try {
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.removeItem(SESSION_PIN_KEY);
+        }
+      } catch {}
     },
 
     wipeAll() {
       localStorage.removeItem(STORAGE_KEY);
       activeKey = null;
       activeProfiles = null;
+      try {
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.removeItem(SESSION_PIN_KEY);
+        }
+      } catch {}
     },
 
     getProfilesCount() {
@@ -247,6 +291,91 @@
       if (!activeProfiles) throw new Error('Vault is locked');
       const updated = activeProfiles.filter(p => p.id !== profileId);
       await commitVault(updated);
+      return true;
+    },
+
+    /* ------------------------------------------- Dispatch History & Password Security --- */
+    async encryptSecret(plaintext) {
+      if (!activeKey) return null;
+      const enc = new TextEncoder();
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ciphertext = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: iv },
+        activeKey,
+        enc.encode(plaintext)
+      );
+      return {
+        iv: buf2b64(iv),
+        ciphertext: buf2b64(ciphertext)
+      };
+    },
+
+    async decryptSecret(encryptedObj) {
+      if (!activeKey || !encryptedObj || !encryptedObj.iv || !encryptedObj.ciphertext) {
+        throw new Error('Vault is locked. Unlock vault to view password.');
+      }
+      const iv = b642buf(encryptedObj.iv);
+      const ciphertext = b642buf(encryptedObj.ciphertext);
+      const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: new Uint8Array(iv) },
+        activeKey,
+        ciphertext
+      );
+      const dec = new TextDecoder();
+      return dec.decode(decrypted);
+    },
+
+    getDispatchHistory() {
+      try {
+        const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : [];
+      } catch {
+        return [];
+      }
+    },
+
+    async addDispatchRecord({ recipient, pdf_filename, subject, status, password, message, error }) {
+      const history = this.getDispatchHistory();
+      let encryptedPassword = null;
+      if (password && this.isUnlocked()) {
+        try {
+          encryptedPassword = await this.encryptSecret(password);
+        } catch {}
+      }
+
+      const record = {
+        id: 'disp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        timestamp: new Date().toISOString(),
+        recipient: recipient || 'Unknown',
+        pdf_filename: pdf_filename || 'document.pdf',
+        subject: subject || 'Secure Document',
+        status: status || 'success',
+        message: message || '',
+        error: error || '',
+        encrypted_password: encryptedPassword,
+        has_password: !!password
+      };
+
+      const updated = [record, ...history].slice(0, MAX_HISTORY_RECORDS);
+      try {
+        localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(updated));
+      } catch {}
+      return record;
+    },
+
+    async revealDispatchPassword(recordId) {
+      if (!this.isUnlocked()) {
+        throw new Error('Vault is locked. Enter Master PIN to view password.');
+      }
+      const history = this.getDispatchHistory();
+      const rec = history.find(r => r.id === recordId);
+      if (!rec) throw new Error('Record not found');
+      if (!rec.encrypted_password) throw new Error('No encrypted password recorded for this dispatch');
+      return await this.decryptSecret(rec.encrypted_password);
+    },
+
+    clearDispatchHistory() {
+      localStorage.removeItem(HISTORY_STORAGE_KEY);
       return true;
     }
   };
