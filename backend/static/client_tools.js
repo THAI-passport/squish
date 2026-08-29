@@ -1,8 +1,9 @@
 
 // Auto-generated client_tools.js for static WASM fallback
-const STATIC_TOOLS = [{"key":"merge","name":"Merge PDF","group":"Organize","blurb":"Combine several PDFs into one, in the order you arrange them.","accept":".pdf","multi":true,"min_files":2,"fields":[{"name":"output_name","kind":"text","label":"Output name","placeholder":"merged","help":"Auto-filled from your files; edit if you like. The .pdf extension is added automatically."}],"available":true,"needs":""},{"key":"split","name":"Split PDF","group":"Organize","blurb":"Pull out a range, or burst the file into separate documents.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"mode","kind":"select","label":"Mode","options":[["ranges","Extract selected pages into one PDF"],["every","One PDF per page"],["chunks","Fixed-size groups"]],"default":"ranges"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"},{"name":"size","kind":"number","label":"Pages per group","default":2,"min":1,"max":500}],"available":true,"needs":""},{"key":"remove-pages","name":"Remove pages","group":"Organize","blurb":"Delete the pages you name and keep everything else.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"Pages to remove","placeholder":"e.g. 2 or 4-6","help":"The pages to delete.","picker":"remove"}],"available":true,"needs":""},{"key":"organize","name":"Reorder pages","group":"Organize","blurb":"Rebuild the document in an explicit page order.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"New order","placeholder":"3,1,2,4-","help":"Pages appear in exactly this order.","picker":"order"}],"available":true,"needs":""},{"key":"rotate","name":"Rotate PDF","group":"Organize","blurb":"Turn pages a quarter, half or three-quarter turn.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"angle","kind":"select","label":"Rotation","options":[["90","90 clockwise"],["180","180"],["270","90 counter-clockwise"]],"default":"90"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"split-bookmarks","name":"Split at bookmarks","group":"Organize","blurb":"Break a long document into sections using its own outline.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"level","kind":"select","label":"Split at","options":[["1","Top-level bookmarks only"],["2","Level 2 and above"],["3","Level 3 and above"]],"default":"1"}],"available":true,"needs":""},{"key":"n-up","name":"N-up / booklet","group":"Organize","blurb":"Print two or four pages per sheet to save paper.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"per_sheet","kind":"select","label":"Pages per sheet","options":[["2","2 up"],["4","4 up"]],"default":"2"},{"name":"gap","kind":"number","label":"Gap (pt)","default":8,"min":0,"max":72},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"compress","name":"Compress PDF","group":"Optimize","blurb":"Shrink the file by downsampling images and deduplicating resources.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"level","kind":"select","label":"Compression","options":[["low","Less compression, best quality"],["recommended","Recommended"],["extreme","Extreme, smallest file"]],"default":"recommended"}],"available":false,"needs":"Ghostscript"},{"key":"repair","name":"Repair PDF","group":"Optimize","blurb":"Rebuild a damaged cross-reference table and recover what is readable.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":false,"needs":"qpdf"},{"key":"grayscale","name":"Grayscale PDF","group":"Optimize","blurb":"Strip colour for cheaper printing, usually a big size win too.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":false,"needs":"Ghostscript"},{"key":"ocr","name":"OCR PDF","group":"Optimize","blurb":"Add a searchable, selectable text layer to a scan.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"lang","kind":"select","label":"Language","options":[["eng","English"],["fra","French"],["deu","German"],["spa","Spanish"],["por","Portuguese"],["ita","Italian"]],"default":"eng"},{"name":"deskew","kind":"checkbox","label":"Straighten crooked scans"},{"name":"force","kind":"checkbox","label":"Re-OCR pages that already have text"}],"available":false,"needs":"OCR engine"},{"key":"jpg-to-pdf","name":"Image to PDF","group":"Convert to PDF","blurb":"Turn JPG, PNG or WEBP images into a PDF, one image per page.","accept":".jpg,.jpeg,.png,.webp,.bmp,.tif,.tiff","multi":true,"min_files":1,"fields":[{"name":"size","kind":"select","label":"Page size","options":[["fit","Fit to each image"],["a4","A4"],["letter","US Letter"]],"default":"fit"},{"name":"margin","kind":"number","label":"Margin (pt)","default":0,"min":0,"max":200}],"available":true,"needs":""},{"key":"office-to-pdf","name":"Office to PDF","group":"Convert to PDF","blurb":"Word, Excel and PowerPoint files rendered to PDF by LibreOffice.","accept":".csv,.doc,.docx,.odp,.ods,.odt,.ppt,.pptx,.rtf,.txt,.xls,.xlsx","multi":true,"min_files":1,"fields":null,"available":false,"needs":"LibreOffice"},{"key":"md-to-pdf","name":"Markdown to PDF","group":"Convert to PDF","blurb":"Render Markdown to PDF with faithful tables, code and page breaks. Upload a .md file or paste text below.","accept":".md,.markdown,.mdown,.txt","multi":false,"min_files":0,"fields":[{"name":"md_text","kind":"textarea","label":"Markdown text","placeholder":"# Title\n\nPaste or type Markdown here. Used only when no file is uploaded."},{"name":"page_size","kind":"select","label":"Page size","options":[["a4","A4"],["letter","US Letter"]],"default":"a4"},{"name":"margin","kind":"number","label":"Margin (mm)","default":18,"min":0,"max":50},{"name":"title","kind":"text","label":"Document title","help":"Defaults to the file name."},{"name":"allow_remote","kind":"checkbox","label":"Allow remote images","help":"Off by default. Fetches https images referenced in the document; private/loopback addresses stay blocked."}],"available":false,"needs":"WeasyPrint"},{"key":"pdf-to-jpg","name":"PDF to image","group":"Convert from PDF","blurb":"Render each page as a JPG or PNG at the resolution you choose.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"format","kind":"select","label":"Format","options":[["jpg","JPG"],["png","PNG"]],"default":"jpg"},{"name":"dpi","kind":"number","label":"Resolution (DPI)","default":150,"min":36,"max":600},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"pdf-to-word","name":"PDF to Word","group":"Convert from PDF","blurb":"Rebuild paragraphs, tables and images as an editable .docx.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":false,"needs":"pdf2docx"},{"key":"pdf-to-excel","name":"PDF to Excel","group":"Convert from PDF","blurb":"Extract detected tables into a worksheet each.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"pdf-to-powerpoint","name":"PDF to PowerPoint","group":"Convert from PDF","blurb":"One slide per page, rendered full bleed.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"dpi","kind":"number","label":"Resolution (DPI)","default":150,"min":72,"max":300},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"pdf-to-pdfa","name":"PDF to PDF/A","group":"Convert from PDF","blurb":"Convert to the PDF/A-2b archival standard.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":false,"needs":"Ghostscript"},{"key":"pdf-to-markdown","name":"PDF to Markdown","group":"Convert from PDF","blurb":"Extract the text layer as Markdown, page by page.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"pdf-to-text","name":"PDF to Text","group":"Convert from PDF","blurb":"Extract the raw text layer as a .txt file.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"extract-images","name":"Extract images","group":"Convert from PDF","blurb":"Recover embedded images at their original resolution.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"min_size","kind":"number","label":"Ignore images smaller than (px)","default":64,"min":0,"max":4000,"help":"Filters out rules, bullets and spacer pixels."},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"extract-attachments","name":"Extract attachments","group":"Convert from PDF","blurb":"Pull out files embedded inside the PDF.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":true,"needs":""},{"key":"extract-fonts","name":"Extract fonts","group":"Convert from PDF","blurb":"Recover embedded font files.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"watermark","name":"Add watermark","group":"Edit","blurb":"Stamp text across the page, once or tiled.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"text","kind":"text","label":"Watermark text","placeholder":"CONFIDENTIAL","required":true},{"name":"mode","kind":"select","label":"Layout","options":[["single","Once per page"],["tile","Tiled"]],"default":"single"},{"name":"position","kind":"select","label":"Position","options":[["top-left","top left"],["top","top"],["top-right","top right"],["left","left"],["center","center"],["right","right"],["bottom-left","bottom left"],["bottom","bottom"],["bottom-right","bottom right"]],"default":"center"},{"name":"size","kind":"number","label":"Font size","default":42,"min":6,"max":200},{"name":"opacity","kind":"number","label":"Opacity","default":0.25,"min":0.05,"max":1,"step":0.05},{"name":"angle","kind":"number","label":"Angle","default":45,"min":-180,"max":180},{"name":"color","kind":"color","label":"Colour","default":"#7c5cff"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"page-numbers","name":"Add page numbers","group":"Edit","blurb":"Number the pages, with your own format and placement.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"format","kind":"text","label":"Format","default":"{n}","help":"{n} is the number, {total} the count. e.g. Page {n} of {total}"},{"name":"position","kind":"select","label":"Position","options":[["top-left","top left"],["top","top"],["top-right","top right"],["left","left"],["center","center"],["right","right"],["bottom-left","bottom left"],["bottom","bottom"],["bottom-right","bottom right"]],"default":"bottom"},{"name":"start","kind":"number","label":"Start at","default":1,"min":0,"max":99999},{"name":"size","kind":"number","label":"Font size","default":11,"min":6,"max":72},{"name":"color","kind":"color","label":"Colour","default":"#000000"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"crop","name":"Crop PDF","group":"Edit","blurb":"Trim margins off every page, measured in points.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"top","kind":"number","label":"Top (pt)","default":0,"min":0,"max":1000},{"name":"bottom","kind":"number","label":"Bottom (pt)","default":0,"min":0,"max":1000},{"name":"left","kind":"number","label":"Left (pt)","default":0,"min":0,"max":1000},{"name":"right","kind":"number","label":"Right (pt)","default":0,"min":0,"max":1000},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"header-footer","name":"Header / footer","group":"Edit","blurb":"Running text at the top or bottom, with date and filename tokens.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"text","kind":"text","label":"Text","required":true,"placeholder":"Draft \u2014 {date} \u2014 page {n} of {total}","help":"Tokens: {n} {total} {date} {filename}"},{"name":"position","kind":"select","label":"Position","options":[["top-left","top left"],["top","top"],["top-right","top right"],["left","left"],["center","center"],["right","right"],["bottom-left","bottom left"],["bottom","bottom"],["bottom-right","bottom right"]],"default":"top"},{"name":"size","kind":"number","label":"Font size","default":10,"min":6,"max":72},{"name":"color","kind":"color","label":"Colour","default":"#555555"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"flatten","name":"Flatten PDF","group":"Edit","blurb":"Bake annotations and form fields in so they can no longer be edited.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":true,"needs":""},{"key":"metadata","name":"Edit metadata","group":"Edit","blurb":"Change the title and author, or strip identifying metadata entirely.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"strip","kind":"checkbox","label":"Strip everything (ignores the fields below)"},{"name":"title","kind":"text","label":"Title"},{"name":"author","kind":"text","label":"Author"},{"name":"subject","kind":"text","label":"Subject"},{"name":"keywords","kind":"text","label":"Keywords"}],"available":true,"needs":""},{"key":"rasterise","name":"Rasterise PDF","group":"Security","blurb":"Rebuild every page as a flat image, destroying scripts and form fields.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"dpi","kind":"number","label":"Resolution (DPI)","default":150,"min":72,"max":400},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"protect","name":"Protect PDF","group":"Security","blurb":"Encrypt with AES-256 and set what readers are allowed to do.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"password_new","kind":"password","label":"New password","required":true},{"name":"allow_copy","kind":"checkbox","label":"Allow copying text"},{"name":"allow_modify","kind":"checkbox","label":"Allow editing and annotation"}],"available":true,"needs":""},{"key":"email-secure","name":"Secure Email Dispatch","group":"Security","blurb":"Send an AES-256 encrypted PDF in Email #1, and the decryption key in Email #2.","accept":".pdf,.html,.htm","multi":true,"min_files":1,"fields":[{"name":"recipient_email","kind":"text","label":"Recipient email address","required":true,"placeholder":"recipient@example.com","help":"Destination inbox for the secure document and password."},{"name":"email_subject","kind":"text","label":"Email subject","placeholder":"Confidential Document","help":"Optional subject line."},{"name":"password_mode","kind":"select","label":"Password mode","options":[["random","Auto-generate strong 16-character password"],["manual","Specify custom password"]],"default":"random"},{"name":"custom_password","kind":"password","label":"Custom password","placeholder":"Enter password (if manual mode selected)","help":"Only used if manual password mode is chosen."}],"available":false,"needs":"SMTP Relay / Worker"},{"key":"unlock","name":"Unlock PDF","group":"Security","blurb":"Strip encryption from a PDF whose password you know.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":true,"needs":""},{"key":"redact","name":"Redact PDF","group":"Security","blurb":"Permanently erase matching text -- not a black box drawn on top.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"terms","kind":"textarea","label":"Terms to redact","required":true,"placeholder":"one term per line"},{"name":"color","kind":"color","label":"Box colour","default":"#000000"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"auto-redact","name":"Auto-redact","group":"Security","blurb":"Automatically black out emails, phone numbers, SSNs, or credit cards. WARNING: Best-effort only; always verify output as layout issues can cause misses.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"redact_email","kind":"checkbox","label":"Redact Emails"},{"name":"redact_ssn","kind":"checkbox","label":"Redact SSNs"},{"name":"redact_phone","kind":"checkbox","label":"Redact Phone Numbers"},{"name":"redact_cc","kind":"checkbox","label":"Redact Credit Cards"},{"name":"color","kind":"color","label":"Box colour","default":"#000000"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"sign-pdf","name":"Sign PDF","group":"Security","blurb":"Digitally sign a PDF using your own .p12 or .pfx certificate.","accept":".pdf,.p12,.pfx","multi":true,"min_files":2,"fields":[{"name":"password_cert","kind":"password","label":"Certificate password","required":true}],"available":false,"needs":"pyhanko"},{"key":"verify-signature","name":"Verify Signature","group":"Security","blurb":"Check the validity of digital signatures on a PDF.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":false,"needs":"pyhanko"},{"key":"compare","name":"Compare PDFs","group":"Security","blurb":"Line-by-line diff of two documents' text.","accept":".pdf","multi":true,"min_files":2,"fields":null,"available":true,"needs":""}];
-const STATIC_VERSION = "1.4.1-squish";
+const STATIC_TOOLS = [{"key":"merge","name":"Merge PDF","group":"Organize","blurb":"Combine several PDFs into one, in the order you arrange them.","accept":".pdf","multi":true,"min_files":2,"fields":[{"name":"output_name","kind":"text","label":"Output name","placeholder":"merged","help":"Auto-filled from your files; edit if you like. The .pdf extension is added automatically."}],"available":true,"needs":""},{"key":"split","name":"Split PDF","group":"Organize","blurb":"Pull out a range, or burst the file into separate documents.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"mode","kind":"select","label":"Mode","options":[["ranges","Extract selected pages into one PDF"],["every","One PDF per page"],["chunks","Fixed-size groups"]],"default":"ranges"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"},{"name":"size","kind":"number","label":"Pages per group","default":2,"min":1,"max":500}],"available":true,"needs":""},{"key":"remove-pages","name":"Remove pages","group":"Organize","blurb":"Delete the pages you name and keep everything else.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"Pages to remove","placeholder":"e.g. 2 or 4-6","help":"The pages to delete.","picker":"remove"}],"available":true,"needs":""},{"key":"organize","name":"Reorder pages","group":"Organize","blurb":"Rebuild the document in an explicit page order.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"New order","placeholder":"3,1,2,4-","help":"Pages appear in exactly this order.","picker":"order"}],"available":true,"needs":""},{"key":"rotate","name":"Rotate PDF","group":"Organize","blurb":"Turn pages a quarter, half or three-quarter turn.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"angle","kind":"select","label":"Rotation","options":[["90","90 clockwise"],["180","180"],["270","90 counter-clockwise"]],"default":"90"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"split-bookmarks","name":"Split at bookmarks","group":"Organize","blurb":"Break a long document into sections using its own outline.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"level","kind":"select","label":"Split at","options":[["1","Top-level bookmarks only"],["2","Level 2 and above"],["3","Level 3 and above"]],"default":"1"}],"available":true,"needs":""},{"key":"n-up","name":"N-up / booklet","group":"Organize","blurb":"Print two or four pages per sheet to save paper.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"per_sheet","kind":"select","label":"Pages per sheet","options":[["2","2 up"],["4","4 up"]],"default":"2"},{"name":"gap","kind":"number","label":"Gap (pt)","default":8,"min":0,"max":72},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"compress","name":"Compress PDF","group":"Optimize","blurb":"Clean, deduplicate and deflate PDF objects without uploading the file.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"level","kind":"select","label":"Compression","options":[["low","Less compression, best quality"],["recommended","Recommended"],["extreme","Extreme, smallest file"]],"default":"recommended"}],"available":true,"needs":""},{"key":"repair","name":"Repair PDF","group":"Optimize","blurb":"Best-effort recovery of damaged PDF structure, entirely in your browser.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":true,"needs":""},{"key":"grayscale","name":"Grayscale PDF","group":"Optimize","blurb":"Rebuild pages in grayscale for cheaper printing (browser mode rasterises pages).","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":true,"needs":""},{"key":"ocr","name":"OCR PDF","group":"Optimize","blurb":"Add a searchable, selectable text layer to a scan.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"lang","kind":"select","label":"Language","options":[["eng","English"],["fra","French"],["deu","German"],["spa","Spanish"],["por","Portuguese"],["ita","Italian"]],"default":"eng"},{"name":"deskew","kind":"checkbox","label":"Straighten crooked scans"},{"name":"force","kind":"checkbox","label":"Re-OCR pages that already have text"}],"available":false,"needs":"OCR engine"},{"key":"jpg-to-pdf","name":"Image to PDF","group":"Convert to PDF","blurb":"Turn JPG, PNG or WEBP images into a PDF, one image per page.","accept":".jpg,.jpeg,.png,.webp,.bmp,.tif,.tiff","multi":true,"min_files":1,"fields":[{"name":"size","kind":"select","label":"Page size","options":[["fit","Fit to each image"],["a4","A4"],["letter","US Letter"]],"default":"fit"},{"name":"margin","kind":"number","label":"Margin (pt)","default":0,"min":0,"max":200}],"available":true,"needs":""},{"key":"office-to-pdf","name":"Office to PDF","group":"Convert to PDF","blurb":"Word, Excel and PowerPoint files rendered to PDF by LibreOffice.","accept":".csv,.doc,.docx,.odp,.ods,.odt,.ppt,.pptx,.rtf,.txt,.xls,.xlsx","multi":true,"min_files":1,"fields":null,"available":false,"needs":"LibreOffice"},{"key":"md-to-pdf","name":"Markdown to PDF","group":"Convert to PDF","blurb":"Render Markdown to PDF locally with browser-safe page layout.","accept":".md,.markdown,.mdown,.txt","multi":false,"min_files":0,"fields":[{"name":"md_text","kind":"textarea","label":"Markdown text","placeholder":"# Title\n\nPaste or type Markdown here. Used only when no file is uploaded."},{"name":"page_size","kind":"select","label":"Page size","options":[["a4","A4"],["letter","US Letter"]],"default":"a4"},{"name":"margin","kind":"number","label":"Margin (mm)","default":18,"min":0,"max":50},{"name":"title","kind":"text","label":"Document title","help":"Defaults to the file name."},{"name":"allow_remote","kind":"checkbox","label":"Allow remote images","help":"Off by default. Fetches https images referenced in the document; private/loopback addresses stay blocked."}],"available":true,"needs":""},{"key":"pdf-to-jpg","name":"PDF to image","group":"Convert from PDF","blurb":"Render each page as a JPG or PNG at the resolution you choose.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"format","kind":"select","label":"Format","options":[["jpg","JPG"],["png","PNG"]],"default":"jpg"},{"name":"dpi","kind":"number","label":"Resolution (DPI)","default":150,"min":36,"max":600},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"pdf-to-word","name":"PDF to Word","group":"Convert from PDF","blurb":"Rebuild paragraphs, tables and images as an editable .docx.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":false,"needs":"pdf2docx"},{"key":"pdf-to-excel","name":"PDF to Excel","group":"Convert from PDF","blurb":"Extract detected tables into a worksheet each.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"pdf-to-powerpoint","name":"PDF to PowerPoint","group":"Convert from PDF","blurb":"One slide per page, rendered full bleed.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"dpi","kind":"number","label":"Resolution (DPI)","default":150,"min":72,"max":300},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"pdf-to-pdfa","name":"PDF to PDF/A","group":"Convert from PDF","blurb":"Convert to the PDF/A-2b archival standard.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":false,"needs":"Ghostscript"},{"key":"pdf-to-markdown","name":"PDF to Markdown","group":"Convert from PDF","blurb":"Extract the text layer as Markdown, page by page.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"pdf-to-text","name":"PDF to Text","group":"Convert from PDF","blurb":"Extract the raw text layer as a .txt file.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"extract-images","name":"Extract images","group":"Convert from PDF","blurb":"Recover embedded images at their original resolution.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"min_size","kind":"number","label":"Ignore images smaller than (px)","default":64,"min":0,"max":4000,"help":"Filters out rules, bullets and spacer pixels."},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"extract-attachments","name":"Extract attachments","group":"Convert from PDF","blurb":"Pull out files embedded inside the PDF.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":true,"needs":""},{"key":"extract-fonts","name":"Extract fonts","group":"Convert from PDF","blurb":"Recover embedded font files.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"watermark","name":"Add watermark","group":"Edit","blurb":"Stamp text across the page, once or tiled.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"text","kind":"text","label":"Watermark text","placeholder":"CONFIDENTIAL","required":true},{"name":"mode","kind":"select","label":"Layout","options":[["single","Once per page"],["tile","Tiled"]],"default":"single"},{"name":"position","kind":"select","label":"Position","options":[["top-left","top left"],["top","top"],["top-right","top right"],["left","left"],["center","center"],["right","right"],["bottom-left","bottom left"],["bottom","bottom"],["bottom-right","bottom right"]],"default":"center"},{"name":"size","kind":"number","label":"Font size","default":42,"min":6,"max":200},{"name":"opacity","kind":"number","label":"Opacity","default":0.25,"min":0.05,"max":1,"step":0.05},{"name":"angle","kind":"number","label":"Angle","default":45,"min":-180,"max":180},{"name":"color","kind":"color","label":"Colour","default":"#7c5cff"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"page-numbers","name":"Add page numbers","group":"Edit","blurb":"Number the pages, with your own format and placement.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"format","kind":"text","label":"Format","default":"{n}","help":"{n} is the number, {total} the count. e.g. Page {n} of {total}"},{"name":"position","kind":"select","label":"Position","options":[["top-left","top left"],["top","top"],["top-right","top right"],["left","left"],["center","center"],["right","right"],["bottom-left","bottom left"],["bottom","bottom"],["bottom-right","bottom right"]],"default":"bottom"},{"name":"start","kind":"number","label":"Start at","default":1,"min":0,"max":99999},{"name":"size","kind":"number","label":"Font size","default":11,"min":6,"max":72},{"name":"color","kind":"color","label":"Colour","default":"#000000"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"crop","name":"Crop PDF","group":"Edit","blurb":"Trim margins off every page, measured in points.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"top","kind":"number","label":"Top (pt)","default":0,"min":0,"max":1000},{"name":"bottom","kind":"number","label":"Bottom (pt)","default":0,"min":0,"max":1000},{"name":"left","kind":"number","label":"Left (pt)","default":0,"min":0,"max":1000},{"name":"right","kind":"number","label":"Right (pt)","default":0,"min":0,"max":1000},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"header-footer","name":"Header / footer","group":"Edit","blurb":"Running text at the top or bottom, with date and filename tokens.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"text","kind":"text","label":"Text","required":true,"placeholder":"Draft \u2014 {date} \u2014 page {n} of {total}","help":"Tokens: {n} {total} {date} {filename}"},{"name":"position","kind":"select","label":"Position","options":[["top-left","top left"],["top","top"],["top-right","top right"],["left","left"],["center","center"],["right","right"],["bottom-left","bottom left"],["bottom","bottom"],["bottom-right","bottom right"]],"default":"top"},{"name":"size","kind":"number","label":"Font size","default":10,"min":6,"max":72},{"name":"color","kind":"color","label":"Colour","default":"#555555"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"flatten","name":"Flatten PDF","group":"Edit","blurb":"Bake annotations and form fields in so they can no longer be edited.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":true,"needs":""},{"key":"metadata","name":"Edit metadata","group":"Edit","blurb":"Change the title and author, or strip identifying metadata entirely.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"strip","kind":"checkbox","label":"Strip everything (ignores the fields below)"},{"name":"title","kind":"text","label":"Title"},{"name":"author","kind":"text","label":"Author"},{"name":"subject","kind":"text","label":"Subject"},{"name":"keywords","kind":"text","label":"Keywords"}],"available":true,"needs":""},{"key":"rasterise","name":"Rasterise PDF","group":"Security","blurb":"Rebuild every page as a flat image, destroying scripts and form fields.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"dpi","kind":"number","label":"Resolution (DPI)","default":150,"min":72,"max":400},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"protect","name":"Protect PDF","group":"Security","blurb":"Encrypt with AES-256 and set what readers are allowed to do.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"password_new","kind":"password","label":"New password","required":true},{"name":"allow_copy","kind":"checkbox","label":"Allow copying text"},{"name":"allow_modify","kind":"checkbox","label":"Allow editing and annotation"}],"available":true,"needs":""},{"key":"email-secure","name":"Secure Email Dispatch","group":"Security","blurb":"Send an AES-256 encrypted PDF in Email #1, and the decryption key in Email #2.","accept":".pdf,.html,.htm","multi":true,"min_files":1,"fields":[{"name":"recipient_email","kind":"text","label":"Recipient email address","required":true,"placeholder":"recipient@example.com","help":"Destination inbox for the secure document and password."},{"name":"email_subject","kind":"text","label":"Email subject","placeholder":"Confidential Document","help":"Optional subject line."},{"name":"password_mode","kind":"select","label":"Password mode","options":[["random","Auto-generate strong 16-character password"],["manual","Specify custom password"]],"default":"random"},{"name":"custom_password","kind":"password","label":"Custom password","placeholder":"Enter password (if manual mode selected)","help":"Only used if manual password mode is chosen."}],"available":false,"needs":"Cloudflare email worker"},{"key":"unlock","name":"Unlock PDF","group":"Security","blurb":"Strip encryption from a PDF whose password you know.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":true,"needs":""},{"key":"redact","name":"Redact PDF","group":"Security","blurb":"Permanently erase matching text -- not a black box drawn on top.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"terms","kind":"textarea","label":"Terms to redact","required":true,"placeholder":"one term per line"},{"name":"color","kind":"color","label":"Box colour","default":"#000000"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"auto-redact","name":"Auto-redact","group":"Security","blurb":"Automatically black out emails, phone numbers, SSNs, or credit cards. WARNING: Best-effort only; always verify output as layout issues can cause misses.","accept":".pdf","multi":false,"min_files":1,"fields":[{"name":"redact_email","kind":"checkbox","label":"Redact Emails"},{"name":"redact_ssn","kind":"checkbox","label":"Redact SSNs"},{"name":"redact_phone","kind":"checkbox","label":"Redact Phone Numbers"},{"name":"redact_cc","kind":"checkbox","label":"Redact Credit Cards"},{"name":"color","kind":"color","label":"Box colour","default":"#000000"},{"name":"pages","kind":"text","label":"Pages","placeholder":"all, or 1-3,7,10-","help":"Blank means every page.","picker":"select"}],"available":true,"needs":""},{"key":"sign-pdf","name":"Sign PDF","group":"Security","blurb":"Digitally sign a PDF using your own .p12 or .pfx certificate.","accept":".pdf,.p12,.pfx","multi":true,"min_files":2,"fields":[{"name":"password_cert","kind":"password","label":"Certificate password","required":true}],"available":false,"needs":"pyhanko"},{"key":"verify-signature","name":"Verify Signature","group":"Security","blurb":"Check the validity of digital signatures on a PDF.","accept":".pdf","multi":false,"min_files":1,"fields":null,"available":false,"needs":"pyhanko"},{"key":"compare","name":"Compare PDFs","group":"Security","blurb":"Line-by-line diff of two documents' text.","accept":".pdf","multi":true,"min_files":2,"fields":null,"available":true,"needs":""}];
+const STATIC_VERSION = "1.5.0-squish";
 window.STATIC_VERSION = STATIC_VERSION;
+const STATIC_FN_OVERRIDES = {"compress":"compress_wasm","repair":"repair_wasm","grayscale":"grayscale_wasm","md-to-pdf":"md_to_pdf_wasm"};
 
 const TOOLS_PY_SOURCE = `"""Squish PDF tool implementations.
 
@@ -451,6 +452,29 @@ def compress(work: Path, inputs: list[Path], p: dict) -> Result:
     return Result(dest, PDF, f"{base}_compressed.pdf")
 
 
+def compress_wasm(work: Path, inputs: list[Path], p: dict) -> Result:
+    """Browser-safe structural compression using PyMuPDF only.
+
+    WebAssembly cannot run Ghostscript, so static deployments cannot perform
+    lossy image downsampling. They can still garbage-collect unreachable
+    objects, deduplicate streams, compress streams, and generate object
+    streams. As with the server implementation, never return a larger file.
+    """
+    source = inputs[0]
+    if not source.stat().st_size:
+        raise ToolError(f"cannot read {source.name}: file is empty")
+    base = stem(source)
+    dest = work / f"{base}_compressed.pdf"
+    src = open_pdf(source, p.get("password", ""))
+    try:
+        src.save(dest, garbage=4, deflate=True, clean=True, use_objstms=1)
+    finally:
+        src.close()
+    if dest.stat().st_size >= source.stat().st_size:
+        shutil.copyfile(source, dest)
+    return Result(dest, PDF, f"{base}_compressed.pdf")
+
+
 def repair(work: Path, inputs: list[Path], p: dict) -> Result:
     """Rebuild a damaged cross-reference table.
 
@@ -470,6 +494,33 @@ def repair(work: Path, inputs: list[Path], p: dict) -> Result:
         src = fitz.open(inputs[0])   # fitz repairs on open where it can
         save(src, dest)
         src.close()
+    if not dest.exists() or dest.stat().st_size == 0:
+        raise ToolError("the file is too damaged to recover")
+    return Result(dest, PDF, f"{base}_repaired.pdf")
+
+
+def repair_wasm(work: Path, inputs: list[Path], p: dict) -> Result:
+    """Browser-safe best-effort xref rebuild.
+
+    PyMuPDF repairs many broken cross-reference tables while opening a PDF.
+    qpdf remains the stronger server engine, but this recovery pass is useful
+    and honest for Cloudflare's browser-only build.
+    """
+    base = stem(inputs[0])
+    dest = work / f"{base}_repaired.pdf"
+    try:
+        src = fitz.open(inputs[0])
+        if src.needs_pass:
+            password = str(p.get("password") or "")
+            if not password or not src.authenticate(password):
+                src.close()
+                raise ToolError("this PDF is password protected")
+        src.save(dest, garbage=4, deflate=True, clean=True, use_objstms=1)
+        src.close()
+    except ToolError:
+        raise
+    except Exception as exc:
+        raise ToolError(f"the file is too damaged to recover: {exc}")
     if not dest.exists() or dest.stat().st_size == 0:
         raise ToolError("the file is too damaged to recover")
     return Result(dest, PDF, f"{base}_repaired.pdf")
@@ -774,6 +825,53 @@ def md_to_pdf(work: Path, inputs: list[Path], p: dict) -> Result:
     return Result(dest, PDF, f"{base}.pdf")
 
 
+def md_to_pdf_wasm(work: Path, inputs: list[Path], p: dict) -> Result:
+    """Browser-only Markdown renderer using PyMuPDF Story.
+
+    Kept as a separate entry point so static-mode dependency checks can prove
+    this path never imports WeasyPrint or its native Cairo/Pango stack.
+    """
+    import markdown
+    from pygments.formatters import HtmlFormatter
+
+    if inputs:
+        src = inputs[0]
+        try:
+            text = src.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            text = src.read_text(encoding="utf-8", errors="replace")
+        base = stem(src)
+    else:
+        text = str(p.get("md_text") or "")
+        if not text.strip():
+            raise ToolError("upload a .md file or paste some Markdown to convert")
+        base = safe_component(p.get("title") or "document")
+
+    page_name = "Letter" if str(p.get("page_size", "a4")).lower() == "letter" else "A4"
+    try:
+        margin = max(0, min(50, int(float(p.get("margin", 18)))))
+    except (TypeError, ValueError):
+        margin = 18
+    body_html = markdown.markdown(text, extensions=MD_EXTENSIONS, output_format="html5")
+    css = (MD_CSS % {"page": page_name, "margin": margin}) + "\\n" + HtmlFormatter().get_style_defs(".codehilite")
+    story = fitz.Story(html=f"<html><head><style>{css}</style></head><body>{body_html}</body></html>")
+    dest = work / f"{base}.pdf"
+    writer = fitz.DocumentWriter(str(dest))
+    page_rect = fitz.Rect(0, 0, 595, 842) if page_name == "A4" else fitz.Rect(0, 0, 612, 792)
+    m_pt = margin * 2.83465
+    draw_rect = page_rect + (m_pt, m_pt, -m_pt, -m_pt)
+    more = 1
+    try:
+        while more:
+            device = writer.begin_page(page_rect)
+            more, _ = story.place(draw_rect)
+            story.draw(device)
+            writer.end_page()
+    finally:
+        writer.close()
+    return Result(dest, PDF, f"{base}.pdf")
+
+
 def pdf_to_word(work: Path, inputs: list[Path], p: dict) -> Result:
     """Reconstructs paragraphs, tables and images. Complex layouts drift."""
     from pdf2docx import Converter
@@ -1057,12 +1155,26 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
     if not pdf_input:
         pdf_input = inputs[0]
 
+    # Owner and user password MUST differ. PDF permission enforcement (here:
+    # accessibility + print only, no edit/copy) works by having two separate
+    # passwords -- the *user* password only unlocks the restricted view, and
+    # the *owner* password unlocks full control. If they're the same string
+    # (as this used to default to when no owner password was supplied), most
+    # readers can't tell which one was entered and just grant owner-level
+    # access -- silently defeating the permission restriction for anyone who
+    # has the (emailed) user password. Generate an independent, random,
+    # never-transmitted owner password instead.
+    # PyMuPDF/qpdf reject owner/user passwords longer than 40 characters, so
+    # this needs to stay comfortably under that -- token_urlsafe(24) yields
+    # a 32-character string.
+    owner_pw = str(p.get("owner_password") or "").strip() or secrets.token_urlsafe(24)
+
     src = open_pdf(pdf_input, p.get("pdf_open_password", ""))
     perm = (fitz.PDF_PERM_ACCESSIBILITY | fitz.PDF_PERM_PRINT)
     base = stem(pdf_input)
     dest_pdf = work / f"{base}_protected.pdf"
     src.save(dest_pdf, encryption=fitz.PDF_ENCRYPT_AES_256,
-             owner_pw=str(p.get("owner_password") or pw),
+             owner_pw=owner_pw,
              user_pw=pw, permissions=perm, garbage=4, deflate=True)
     src.close()
 
@@ -1082,6 +1194,17 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
         except Exception:
             pass
 
+    if not smtp_config.get("server") and p.get("smtp_server_profile_id"):
+        # A server-side .env profile (backend/env_manager.py). The password
+        # is resolved here, server-side, and never sent to or held by the
+        # browser -- unlike the browser Vault path, where the client already
+        # holds the decrypted profile and sends it in smtp_profile_json.
+        import env_manager
+        try:
+            smtp_config = env_manager.get_profile_for_dispatch(int(p["smtp_server_profile_id"]))
+        except (KeyError, ValueError) as exc:
+            raise ToolError(f"SMTP profile not found: {exc}")
+
     if not smtp_config.get("server"):
         smtp_config = {
             "server": str(p.get("mail_server") or os.environ.get("MAIL_SERVER") or ""),
@@ -1095,17 +1218,25 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
     if not smtp_config.get("server"):
         raise ToolError("SMTP server is not configured. Please supply SMTP settings or unlock your vault.")
 
-    recipient = str(p.get("recipient_email") or "").strip()
-    if not recipient or "@" not in recipient:
-        raise ToolError("A valid recipient email address is required.")
+    try:
+        recipient = smtp_manager.validate_recipient_email(p.get("recipient_email") or "")
+    except ValueError as exc:
+        raise ToolError(str(exc))
 
     subject = str(p.get("email_subject") or "").strip() or None
     email2_subj = str(p.get("email2_subject") or "").strip() or None
     email2_body_tmpl = str(p.get("email2_body") or "").strip() or None
     delay_sec = float(p.get("delay_seconds") or 2.5)
 
+    # send_dual_secure_email raises only when NOTHING was sent (e.g. it
+    # couldn't even connect/authenticate). If Email #1 (the PDF) went out but
+    # Email #2 (the password) then failed, it returns a dict with
+    # partial=True instead of raising -- see the docstring there. That
+    # distinction matters here: a bare \`except -> ToolError\` would report
+    # "failed" even though the recipient's inbox already has the encrypted
+    # PDF sitting in it with no password ever coming.
     try:
-        smtp_manager.send_dual_secure_email(
+        send_result = smtp_manager.send_dual_secure_email(
             smtp=smtp_config,
             recipient=recipient,
             pdf_path=dest_pdf,
@@ -1117,17 +1248,47 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
             delay_seconds=delay_sec
         )
     except Exception as exc:
-        raise ToolError(f"Email delivery failed: {exc}")
+        raise ToolError(f"Email delivery failed -- nothing was sent: {exc}")
 
     receipt_file = work / f"{base}_delivery_receipt.json"
-    receipt_data = {
-        "status": "success",
-        "recipient": recipient,
-        "pdf_file": f"{base}_protected.pdf",
-        "password": pw,
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "message": f"Successfully sent encrypted document and decryption key to {recipient}"
-    }
+    # The receipt deliberately does NOT carry the SMTP password (or any SMTP
+    # config) for a resend: the browser already holds whatever config it
+    # used for this request (vault profile or the manual fields), and
+    # /api/smtp/resend-key expects the caller to supply \`smtp\` again itself
+    # rather than have the server hand a credential back through a result
+    # file. Only the pieces needed to reconstruct Email #2's *content* --
+    # not its auth -- are included here.
+    if send_result.get("partial"):
+        receipt_data = {
+            "status": "partial_failure",
+            "recipient": recipient,
+            "pdf_file": f"{base}_protected.pdf",
+            "password": pw,
+            "step1_sent": True,
+            "step2_sent": False,
+            "error": send_result.get("error"),
+            "resend": {
+                "recipient": recipient,
+                "password": pw,
+                "pdf_filename": f"{base}_protected.pdf",
+                "subject": subject,
+                "email2_subject": email2_subj,
+                "email2_body": email2_body_tmpl,
+            },
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "message": send_result.get("message"),
+        }
+    else:
+        receipt_data = {
+            "status": "success",
+            "recipient": recipient,
+            "pdf_file": f"{base}_protected.pdf",
+            "password": pw,
+            "step1_sent": True,
+            "step2_sent": True,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "message": f"Successfully sent encrypted document and decryption key to {recipient}"
+        }
     receipt_file.write_text(json.dumps(receipt_data, indent=2), encoding="utf-8")
     return Result(receipt_file, "application/json", f"{base}_delivery_receipt.json")
 
@@ -1592,6 +1753,31 @@ def grayscale(work: Path, inputs: list[Path], p: dict) -> Result:
     return Result(dest, PDF, f"{base}_gray.pdf")
 
 
+def grayscale_wasm(work: Path, inputs: list[Path], p: dict) -> Result:
+    """Browser-safe grayscale conversion by rebuilding pages as gray images.
+
+    Ghostscript preserves vector text on the server. The browser fallback is
+    intentionally explicit about rasterising: it trades search/accessibility
+    for a real grayscale PDF without pretending WebAssembly has Ghostscript.
+    """
+    src = open_pdf(inputs[0], p.get("password", ""))
+    pages = list(range(src.page_count))
+    dpi = clamp_dpi(pages, src, 150)
+    out = fitz.open()
+    try:
+        for pno in pages:
+            page = src[pno]
+            pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csGRAY, alpha=False)
+            new = out.new_page(width=page.rect.width, height=page.rect.height)
+            new.insert_image(new.rect, pixmap=pix)
+        base = stem(inputs[0])
+        dest = save(out, work / f"{base}_gray.pdf")
+    finally:
+        out.close()
+        src.close()
+    return Result(dest, PDF, f"{base}_gray.pdf")
+
+
 def rasterise(work: Path, inputs: list[Path], p: dict) -> Result:
     """Rebuild every page as a flat image.
 
@@ -1941,6 +2127,7 @@ REGISTRY = {t.key: t for t in TOOLS}
 // Pyodide Runner Logic
 let pyodide = null;
 let pyodideReadyPromise = null;
+const optionalPackagePromises = {};
 
 async function initPyodide() {
   if (!pyodideReadyPromise) {
@@ -1963,22 +2150,12 @@ async function initPyodide() {
       // Core engine — every PyMuPDF-backed tool needs this. If it fails, the
       // whole static mode is dead, so surface it and stop.
       try {
-        await micropip.install(['/vendor/pyodide/pymupdf-1.27.2.2-cp314-abi3-pyemscripten_2026_0_wasm32.whl', '/vendor/pyodide/markdown-3.10.3-py3-none-any.whl', 'pygments']);
+        await micropip.install(['/vendor/pyodide/pymupdf-1.27.2.2-cp314-abi3-pyemscripten_2026_0_wasm32.whl', '/vendor/pyodide/markdown-3.10.3-py3-none-any.whl', '/vendor/pyodide/pygments-2.20.0-py3-none-any.whl']);
       } catch (e) {
         console.error("Core engine packages failed to install", e);
         if(msg) msg.textContent = 'Engine failed to load — check your connection and reload.';
         throw e;
       }
-      // Optional packages: openpyxl -> pdf-to-excel, python-pptx -> pdf-to-powerpoint.
-      // Best-effort: if they cannot be resolved we keep the core tools working;
-      // the two dependent tools then fail per-run with a caught error rather
-      // than taking down the whole engine.
-      try {
-        await micropip.install(['openpyxl', 'python-pptx']);
-      } catch (e) {
-        console.warn("Optional export packages unavailable; pdf-to-excel / pdf-to-powerpoint may fail", e);
-      }
-
       // Write tools.py to virtual file system
       pyodide.FS.writeFile('/home/pyodide/tools.py', TOOLS_PY_SOURCE);
 
@@ -2015,9 +2192,11 @@ def run_tool_wrapper(key, files_json, params_json):
 
     # Find tool
     tool = next(t for t in tools.TOOLS if t.key == key)
+    fn_name = json.loads(params.pop("__static_fn_overrides", "{}" )).get(key)
+    fn = getattr(tools, fn_name) if fn_name else tool.fn
 
     # Run
-    result = tool.fn(work_dir, input_paths, params)
+    result = fn(work_dir, input_paths, params)
 
     # Read output
     out_path = result.path
@@ -2037,8 +2216,24 @@ def run_tool_wrapper(key, files_json, params_json):
   return pyodideReadyPromise;
 }
 
+async function ensureOptionalPackage(key) {
+  const packages = {'pdf-to-excel': 'openpyxl', 'pdf-to-powerpoint': 'python-pptx'};
+  const pkg = packages[key];
+  if (!pkg) return;
+  if (!optionalPackagePromises[key]) {
+    optionalPackagePromises[key] = (async () => {
+      const msg = document.getElementById('fileStatus');
+      if(msg) msg.textContent = `Loading optional ${pkg} package...`;
+      const micropip = pyodide.pyimport('micropip');
+      await micropip.install(pkg);
+    })();
+  }
+  return optionalPackagePromises[key];
+}
+
 window.runPyodideTool = async function(key, files, formData) {
   await initPyodide();
+  await ensureOptionalPackage(key);
   const msg = document.getElementById('fileStatus');
   if(msg) msg.textContent = 'Processing locally...';
 
@@ -2062,6 +2257,7 @@ window.runPyodideTool = async function(key, files, formData) {
       params[k] = v;
     }
   }
+  params.__static_fn_overrides = JSON.stringify(STATIC_FN_OVERRIDES);
 
   // Convert dicts to JSON for safe passing to Python
   const filesJson = JSON.stringify(fileNames);
@@ -2093,6 +2289,81 @@ shutil.rmtree('/tmp/squish_work', ignore_errors=True)
 `);
     } catch(e) {}
   }
+};
+
+function staticRandomSecret(bytes = 24) {
+  const raw = new Uint8Array(bytes);
+  crypto.getRandomValues(raw);
+  return Array.from(raw, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function blobToBase64(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+window.runStaticSecureEmail = async function(files, formData) {
+  const pdf = files.find(f => /\.pdf$/i.test(f.name));
+  if (!pdf) throw new Error('Secure Email Dispatch needs a PDF file.');
+  const password = String(formData.get('custom_password') || '').trim();
+  if (password.length < 4) throw new Error('Password must be at least 4 characters.');
+
+  const protectData = new FormData();
+  protectData.append('password_new', password);
+  // Never reuse the emailed user password as the owner password: doing so
+  // silently grants full PDF permissions to the recipient.
+  protectData.append('owner_password', staticRandomSecret());
+  const protectedResult = await window.runPyodideTool('protect', [pdf], protectData);
+
+  let smtp = {};
+  const saved = formData.get('smtp_profile_json');
+  if (saved) {
+    try { smtp = JSON.parse(saved); } catch { throw new Error('Saved SMTP profile is invalid.'); }
+  } else {
+    smtp = {
+      server: String(formData.get('mail_server') || ''),
+      port: Number(formData.get('mail_port') || 587),
+      username: String(formData.get('mail_username') || ''),
+      password: String(formData.get('mail_password') || ''),
+      from_name: String(formData.get('mail_from_name') || ''),
+      security: String(formData.get('mail_security') || 'starttls')
+    };
+  }
+  if (!smtp.server || !smtp.username || !smtp.password) {
+    throw new Error('SMTP server, sender email, and SMTP password are required.');
+  }
+
+  const htmlFile = files.find(f => /\.(html?|txt)$/i.test(f.name));
+  const customHtml = String(formData.get('email_body_html') || '');
+  const payload = {
+    smtp,
+    recipient: String(formData.get('recipient_email') || ''),
+    subject: String(formData.get('email_subject') || ''),
+    pdfBase64: await blobToBase64(protectedResult.blob),
+    pdfFilename: protectedResult.name,
+    htmlBody: customHtml || (htmlFile ? await htmlFile.text() : ''),
+    password,
+    delaySeconds: Number(formData.get('delay_seconds') || 2.5),
+    email2Subject: String(formData.get('email2_subject') || ''),
+    email2Body: String(formData.get('email2_body') || '')
+  };
+
+  const response = await fetch('/api/t/email-secure', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  let receipt;
+  try { receipt = await response.json(); } catch { throw new Error(`Email worker returned HTTP ${response.status}.`); }
+  if (!response.ok && receipt.status !== 'partial_failure') {
+    throw new Error(receipt.error || `Email worker returned HTTP ${response.status}.`);
+  }
+  return receipt;
 };
 
 if (window.onStaticToolsReady) {

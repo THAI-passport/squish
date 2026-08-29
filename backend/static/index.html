@@ -2375,10 +2375,16 @@ async function submit(){
   try{
     let blob, name, isDeliveryReceipt = false, receiptObj = null;
     if(isStatic) {
-      if (!window.runPyodideTool) throw new Error("In-browser tools are still loading — try again in a moment.");
-      const result = await window.runPyodideTool(current.key, files, fd);
-      blob = result.blob;
-      name = result.name || (current.key + '.out');
+      if(current.key === 'email-secure'){
+        if(!window.runStaticSecureEmail) throw new Error("The Cloudflare email worker is still loading — try again in a moment.");
+        receiptObj = await window.runStaticSecureEmail(files, fd);
+        isDeliveryReceipt = true;
+      }else{
+        if (!window.runPyodideTool) throw new Error("In-browser tools are still loading — try again in a moment.");
+        const result = await window.runPyodideTool(current.key, files, fd);
+        blob = result.blob;
+        name = result.name || (current.key + '.out');
+      }
     } else {
       const r = await fetch('/api/t/' + current.key, {method:'POST', body:fd, headers: apiHeaders()});
       if(!r.ok){
@@ -3177,7 +3183,7 @@ async function boot(){
     document.getElementById('footerMode').textContent = 'in-browser (WASM)';
     const note = document.getElementById('modeNote');
     note.hidden = false;
-    note.textContent = 'Running in browser-only mode. Tools that need server engines (OCR, Office conversion, signing) are unavailable and shown greyed out.';
+    note.textContent = 'PDF work runs in your browser. Native-only tools (OCR, Office conversion, PDF/A and signing) stay unavailable; Cloudflare enables secure email when its Worker is deployed.';
     const script = document.createElement('script');
     script.src = 'client_tools.js';
     document.head.append(script);
@@ -3197,6 +3203,20 @@ window.onStaticToolsReady = function(staticTools) {
   }
   applySavedToolOrder();
   render(); buildPopular(); updateCounts();
+  // Secure email is not a pure static feature. Enable it only when the
+  // same-origin Pages Worker proves it is present; GitHub Pages and ordinary
+  // static servers keep the tile honestly disabled.
+  fetch('/api/cloudflare-capabilities', {signal: AbortSignal.timeout(2500)})
+    .then(r => r.ok ? r.json() : null)
+    .then(caps => {
+      if(!caps?.secure_email) return;
+      const emailTool = TOOLS.find(t => t.key === 'email-secure');
+      if(!emailTool) return;
+      emailTool.available = true;
+      emailTool.needs = '';
+      render(); buildPopular(); updateCounts();
+    })
+    .catch(() => {});
 };
 
 addEventListener('hashchange', () => {

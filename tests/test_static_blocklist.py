@@ -42,6 +42,17 @@ def _unsupported_map() -> dict[str, str]:
     pytest.fail("no `unsupported` map found in generate_client_tools.py")
 
 
+def _static_fn_overrides() -> dict[str, str]:
+    """Read browser-only function substitutions from the generator."""
+    tree = ast.parse((BACKEND / "generate_client_tools.py").read_text())
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            if any(isinstance(t, ast.Name) and t.id == "static_fn_overrides"
+                   for t in node.targets):
+                return ast.literal_eval(node.value)
+    return {}
+
+
 def _function_graph() -> tuple[dict[str, bool], dict[str, set[str]]]:
     """Static analysis of tools.py's top-level functions.
 
@@ -90,12 +101,14 @@ def test_every_native_tool_is_blocklisted():
     import tools
 
     unsupported = _unsupported_map()
+    overrides = _static_fn_overrides()
     closure, _ = _function_graph()
 
     unblocked = {
-        t.key: t.fn.__name__
+        t.key: overrides.get(t.key, t.fn.__name__)
         for t in tools.TOOLS
-        if closure.get(t.fn.__name__, False) and t.key not in unsupported
+        if closure.get(overrides.get(t.key, t.fn.__name__), False)
+        and t.key not in unsupported
     }
     assert not unblocked, (
         "these tools shell out or import non-wasm packages but are missing "
@@ -113,6 +126,19 @@ def test_blocklist_keys_exist_in_registry():
         f"`unsupported` lists keys that are not in the tool registry: {stale} "
         "(renamed or removed tool? the entry is dead)"
     )
+
+
+def test_static_function_overrides_are_real_and_wasm_safe():
+    import tools
+
+    registry_keys = {t.key for t in tools.TOOLS}
+    overrides = _static_fn_overrides()
+    closure, _ = _function_graph()
+    assert set(overrides) <= registry_keys
+    missing = {name for name in overrides.values() if not hasattr(tools, name)}
+    assert not missing, f"static override functions do not exist: {missing}"
+    native = {key: fn for key, fn in overrides.items() if closure.get(fn, False)}
+    assert not native, f"static overrides still need native engines: {native}"
 
 
 def test_blocklist_only_covers_native_tools():

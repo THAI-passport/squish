@@ -63,22 +63,33 @@ A tool cannot run in the browser if either:
 Pure-Python packages *can* be enabled: add them to the `micropip.install` list
 (the optional, best-effort call) instead of blocklisting the tool.
 
-## Tool availability matrix (build 1.4.1-squish, 38 tools)
+## Tool availability matrix (build 1.5.0-squish, 39 tools)
 
 **Blocked in static mode** (in the `unsupported` map):
 
 | Tool | Reason |
 |---|---|
-| compress | Ghostscript (`gs`) |
-| grayscale | Ghostscript (`gs`) |
 | pdf-to-pdfa | Ghostscript (`gs`) |
-| repair | qpdf |
 | office-to-pdf | LibreOffice (`soffice`) |
 | ocr | ocrmypdf + tesseract |
 | pdf-to-word | pdf2docx (native deps) |
-| md-to-pdf | WeasyPrint (cannot run in wasm) |
 | sign-pdf | pyhanko (cannot run in wasm) |
 | verify-signature | pyhanko (cannot run in wasm) |
+
+**Browser-specific PyMuPDF fallbacks:**
+
+| Tool | Browser behaviour |
+|---|---|
+| compress | Structural cleanup, deduplication and deflate; no Ghostscript image downsampling |
+| repair | Best-effort PyMuPDF xref recovery; qpdf remains stronger on the server |
+| grayscale | Rebuilds pages as grayscale images, so searchable text is rasterised |
+| md-to-pdf | Uses PyMuPDF Story instead of WeasyPrint/Pango |
+
+**Cloudflare Pages Worker:** Secure Email Dispatch is capability-probed at
+runtime. It remains disabled on an ordinary static host. When `_worker.js` is
+deployed on Cloudflare Pages, the browser encrypts the PDF first and the Worker
+sends the already-encrypted attachment and its key via the user's one-time SMTP
+credentials. Cloudflare blocks SMTP port 25; use 465 or 587.
 
 **Enabled via optional pure-Python packages** (best-effort `micropip.install`):
 
@@ -87,9 +98,11 @@ Pure-Python packages *can* be enabled: add them to the `micropip.install` list
 | pdf-to-excel | openpyxl |
 | pdf-to-powerpoint | python-pptx |
 
-If the optional install fails (offline / CDN blocked), the core engine keeps
-working and only these two tools error per-run. They are the least
-browser-verified path — smoke-test them in a real browser after any change.
+These packages load lazily only when their corresponding export tool is used,
+so they never delay or break the core engine. If an optional install fails
+(offline or package index blocked), only that export errors per-run. They are
+the least browser-verified path — smoke-test them in a real browser after any
+change.
 
 **Everything else runs on PyMuPDF** (merge, split, remove/organize/rotate pages,
 split-bookmarks, n-up, jpg-to-pdf, pdf-to-jpg, pdf-to-markdown, pdf-to-text,
@@ -123,7 +136,9 @@ flatten, metadata, rasterise, protect, unlock, redact, auto-redact, compare).
    `role="alert"` / `role="status"` announcement. Restored to append into
    `#toasts` with the right role.
 
-6. **CDN / offline dependency removed.** Pyodide and the core wheels (PyMuPDF, markdown) are now vendored into `static/vendor/pyodide/`. The service worker correctly caches them, making the PWA fully offline-capable and respecting the "no CDN" rule.
+6. **CDN / offline dependency removed.** Pyodide and the core wheels (PyMuPDF,
+   Markdown and Pygments) are vendored into `static/vendor/pyodide/`. The
+   service worker caches them, making the core PDF tools fully offline-capable.
 
 ## Known remaining limitations (not yet addressed)
 

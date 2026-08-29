@@ -445,6 +445,29 @@ def compress(work: Path, inputs: list[Path], p: dict) -> Result:
     return Result(dest, PDF, f"{base}_compressed.pdf")
 
 
+def compress_wasm(work: Path, inputs: list[Path], p: dict) -> Result:
+    """Browser-safe structural compression using PyMuPDF only.
+
+    WebAssembly cannot run Ghostscript, so static deployments cannot perform
+    lossy image downsampling. They can still garbage-collect unreachable
+    objects, deduplicate streams, compress streams, and generate object
+    streams. As with the server implementation, never return a larger file.
+    """
+    source = inputs[0]
+    if not source.stat().st_size:
+        raise ToolError(f"cannot read {source.name}: file is empty")
+    base = stem(source)
+    dest = work / f"{base}_compressed.pdf"
+    src = open_pdf(source, p.get("password", ""))
+    try:
+        src.save(dest, garbage=4, deflate=True, clean=True, use_objstms=1)
+    finally:
+        src.close()
+    if dest.stat().st_size >= source.stat().st_size:
+        shutil.copyfile(source, dest)
+    return Result(dest, PDF, f"{base}_compressed.pdf")
+
+
 def repair(work: Path, inputs: list[Path], p: dict) -> Result:
     """Rebuild a damaged cross-reference table.
 
@@ -464,6 +487,33 @@ def repair(work: Path, inputs: list[Path], p: dict) -> Result:
         src = fitz.open(inputs[0])   # fitz repairs on open where it can
         save(src, dest)
         src.close()
+    if not dest.exists() or dest.stat().st_size == 0:
+        raise ToolError("the file is too damaged to recover")
+    return Result(dest, PDF, f"{base}_repaired.pdf")
+
+
+def repair_wasm(work: Path, inputs: list[Path], p: dict) -> Result:
+    """Browser-safe best-effort xref rebuild.
+
+    PyMuPDF repairs many broken cross-reference tables while opening a PDF.
+    qpdf remains the stronger server engine, but this recovery pass is useful
+    and honest for Cloudflare's browser-only build.
+    """
+    base = stem(inputs[0])
+    dest = work / f"{base}_repaired.pdf"
+    try:
+        src = fitz.open(inputs[0])
+        if src.needs_pass:
+            password = str(p.get("password") or "")
+            if not password or not src.authenticate(password):
+                src.close()
+                raise ToolError("this PDF is password protected")
+        src.save(dest, garbage=4, deflate=True, clean=True, use_objstms=1)
+        src.close()
+    except ToolError:
+        raise
+    except Exception as exc:
+        raise ToolError(f"the file is too damaged to recover: {exc}")
     if not dest.exists() or dest.stat().st_size == 0:
         raise ToolError("the file is too damaged to recover")
     return Result(dest, PDF, f"{base}_repaired.pdf")
@@ -765,6 +815,53 @@ def md_to_pdf(work: Path, inputs: list[Path], p: dict) -> Result:
             writer.end_page()
         writer.close()
 
+    return Result(dest, PDF, f"{base}.pdf")
+
+
+def md_to_pdf_wasm(work: Path, inputs: list[Path], p: dict) -> Result:
+    """Browser-only Markdown renderer using PyMuPDF Story.
+
+    Kept as a separate entry point so static-mode dependency checks can prove
+    this path never imports WeasyPrint or its native Cairo/Pango stack.
+    """
+    import markdown
+    from pygments.formatters import HtmlFormatter
+
+    if inputs:
+        src = inputs[0]
+        try:
+            text = src.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            text = src.read_text(encoding="utf-8", errors="replace")
+        base = stem(src)
+    else:
+        text = str(p.get("md_text") or "")
+        if not text.strip():
+            raise ToolError("upload a .md file or paste some Markdown to convert")
+        base = safe_component(p.get("title") or "document")
+
+    page_name = "Letter" if str(p.get("page_size", "a4")).lower() == "letter" else "A4"
+    try:
+        margin = max(0, min(50, int(float(p.get("margin", 18)))))
+    except (TypeError, ValueError):
+        margin = 18
+    body_html = markdown.markdown(text, extensions=MD_EXTENSIONS, output_format="html5")
+    css = (MD_CSS % {"page": page_name, "margin": margin}) + "\n" + HtmlFormatter().get_style_defs(".codehilite")
+    story = fitz.Story(html=f"<html><head><style>{css}</style></head><body>{body_html}</body></html>")
+    dest = work / f"{base}.pdf"
+    writer = fitz.DocumentWriter(str(dest))
+    page_rect = fitz.Rect(0, 0, 595, 842) if page_name == "A4" else fitz.Rect(0, 0, 612, 792)
+    m_pt = margin * 2.83465
+    draw_rect = page_rect + (m_pt, m_pt, -m_pt, -m_pt)
+    more = 1
+    try:
+        while more:
+            device = writer.begin_page(page_rect)
+            more, _ = story.place(draw_rect)
+            story.draw(device)
+            writer.end_page()
+    finally:
+        writer.close()
     return Result(dest, PDF, f"{base}.pdf")
 
 
@@ -1646,6 +1743,31 @@ def grayscale(work: Path, inputs: list[Path], p: dict) -> Result:
         "-dOverrideICC=true", "-dNOPAUSE", "-dQUIET", "-dBATCH",
         f"-sOutputFile={dest}", str(inputs[0]),
     ], cwd=work)
+    return Result(dest, PDF, f"{base}_gray.pdf")
+
+
+def grayscale_wasm(work: Path, inputs: list[Path], p: dict) -> Result:
+    """Browser-safe grayscale conversion by rebuilding pages as gray images.
+
+    Ghostscript preserves vector text on the server. The browser fallback is
+    intentionally explicit about rasterising: it trades search/accessibility
+    for a real grayscale PDF without pretending WebAssembly has Ghostscript.
+    """
+    src = open_pdf(inputs[0], p.get("password", ""))
+    pages = list(range(src.page_count))
+    dpi = clamp_dpi(pages, src, 150)
+    out = fitz.open()
+    try:
+        for pno in pages:
+            page = src[pno]
+            pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csGRAY, alpha=False)
+            new = out.new_page(width=page.rect.width, height=page.rect.height)
+            new.insert_image(new.rect, pixmap=pix)
+        base = stem(inputs[0])
+        dest = save(out, work / f"{base}_gray.pdf")
+    finally:
+        out.close()
+        src.close()
     return Result(dest, PDF, f"{base}_gray.pdf")
 
 

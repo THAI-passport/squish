@@ -214,6 +214,34 @@ def test_office_to_pdf_rejects_unknown_types(work, pdf):
         T.office_to_pdf(work, [pdf], {})
 
 
+def test_browser_pdf_fallbacks_produce_readable_outputs(pdf, tmp_path):
+    """Cloudflare's PyMuPDF-only replacements must have real outcomes."""
+    source_size = pdf.stat().st_size
+
+    compressed_work = tmp_path / "compressed_wasm"
+    compressed_work.mkdir()
+    compressed = T.compress_wasm(compressed_work, [pdf], {})
+    with fitz.open(compressed.path) as doc:
+        assert doc.page_count == 3
+    assert compressed.path.stat().st_size <= source_size
+
+    repaired_work = tmp_path / "repaired_wasm"
+    repaired_work.mkdir()
+    repaired = T.repair_wasm(repaired_work, [pdf], {})
+    with fitz.open(repaired.path) as doc:
+        assert doc.page_count == 3
+
+    gray_work = tmp_path / "gray_wasm"
+    gray_work.mkdir()
+    gray = T.grayscale_wasm(gray_work, [pdf], {})
+    with fitz.open(gray.path) as doc:
+        assert doc.page_count == 3
+        for page in doc:
+            for image in page.get_images(full=True):
+                pix = fitz.Pixmap(doc, image[0])
+                assert pix.n == 1
+
+
 # ----------------------------------------------------------------- edit ---
 
 def test_watermark_adds_the_text(work, pdf):
@@ -586,3 +614,12 @@ def test_md_to_pdf_requires_some_input(work):
     # No file and no text -> a clear error, regardless of weasyprint presence.
     with pytest.raises(T.ToolError):
         T.md_to_pdf(work, [], {})
+
+
+def test_md_to_pdf_browser_fallback(work):
+    result = T.md_to_pdf_wasm(work, [], {
+        "md_text": "# Browser PDF\n\n| A | B |\n|---|---|\n| 1 | 2 |",
+        "title": "browser-test",
+    })
+    assert result.filename == "browser-test.pdf"
+    assert "Browser PDF" in text_of(result.path)
