@@ -213,6 +213,23 @@ async def tool_list():
     }
 
 
+@app.post("/api/smtp/test")
+async def smtp_test(request: Request):
+    """Test SMTP connection parameters without sending an email."""
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(400, "invalid JSON payload")
+
+    smtp_config = data.get("smtp") or data
+    import smtp_manager
+    res = smtp_manager.test_smtp_connection(smtp_config)
+    if not res.get("ok"):
+        return JSONResponse(res, status_code=400)
+    return JSONResponse(res)
+
+
+
 def discard(work: Path) -> None:
     """Delete a scratch dir now.
 

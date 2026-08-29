@@ -1023,6 +1023,110 @@ def protect(work: Path, inputs: list[Path], p: dict) -> Result:
     return Result(dest, PDF, f"{base}_protected.pdf")
 
 
+def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
+    """Encrypts a PDF and dispatches dual emails: Email 1 with PDF, Email 2 with password."""
+    import json
+    import secrets
+    import string
+    import time
+    import smtp_manager
+
+    pw_mode = str(p.get("password_mode") or "random")
+    pw = str(p.get("custom_password") or "").strip()
+    if pw_mode == "random" or not pw:
+        alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+        pw = "".join(secrets.choice(alphabet) for _ in range(16))
+
+    if len(pw) < 4:
+        raise ToolError("password must be at least 4 characters")
+
+    pdf_input = None
+    html_input = None
+    for inp in inputs:
+        if inp.suffix.lower() == ".pdf" and pdf_input is None:
+            pdf_input = inp
+        elif inp.suffix.lower() in (".html", ".htm") and html_input is None:
+            html_input = inp
+
+    if not pdf_input:
+        pdf_input = inputs[0]
+
+    src = open_pdf(pdf_input, p.get("pdf_open_password", ""))
+    perm = (fitz.PDF_PERM_ACCESSIBILITY | fitz.PDF_PERM_PRINT)
+    base = stem(pdf_input)
+    dest_pdf = work / f"{base}_protected.pdf"
+    src.save(dest_pdf, encryption=fitz.PDF_ENCRYPT_AES_256,
+             owner_pw=str(p.get("owner_password") or pw),
+             user_pw=pw, permissions=perm, garbage=4, deflate=True)
+    src.close()
+
+    html_body = None
+    if html_input and html_input.exists():
+        try:
+            html_body = html_input.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    if not html_body and p.get("email_body_html"):
+        html_body = str(p.get("email_body_html"))
+
+    smtp_config = {}
+    if p.get("smtp_profile_json"):
+        try:
+            smtp_config = json.loads(p.get("smtp_profile_json"))
+        except Exception:
+            pass
+
+    if not smtp_config.get("server"):
+        smtp_config = {
+            "server": str(p.get("mail_server") or os.environ.get("MAIL_SERVER") or ""),
+            "port": int(p.get("mail_port") or os.environ.get("MAIL_PORT") or 587),
+            "username": str(p.get("mail_username") or os.environ.get("MAIL_USERNAME") or ""),
+            "password": str(p.get("mail_password") or os.environ.get("MAIL_PASSWORD") or ""),
+            "from_name": str(p.get("mail_from_name") or os.environ.get("MAIL_FROM_NAME") or ""),
+            "security": str(p.get("mail_security") or "starttls"),
+        }
+
+    if not smtp_config.get("server"):
+        raise ToolError("SMTP server is not configured. Please supply SMTP settings or unlock your vault.")
+
+    recipient = str(p.get("recipient_email") or "").strip()
+    if not recipient or "@" not in recipient:
+        raise ToolError("A valid recipient email address is required.")
+
+    subject = str(p.get("email_subject") or "").strip() or None
+    email2_subj = str(p.get("email2_subject") or "").strip() or None
+    email2_body_tmpl = str(p.get("email2_body") or "").strip() or None
+    delay_sec = float(p.get("delay_seconds") or 2.5)
+
+    try:
+        smtp_manager.send_dual_secure_email(
+            smtp=smtp_config,
+            recipient=recipient,
+            pdf_path=dest_pdf,
+            password=pw,
+            subject=subject,
+            html_body=html_body,
+            email2_subject=email2_subj,
+            email2_body=email2_body_tmpl,
+            delay_seconds=delay_sec
+        )
+    except Exception as exc:
+        raise ToolError(f"Email delivery failed: {exc}")
+
+    receipt_file = work / f"{base}_delivery_receipt.json"
+    receipt_data = {
+        "status": "success",
+        "recipient": recipient,
+        "pdf_file": f"{base}_protected.pdf",
+        "password": pw,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "message": f"Successfully sent encrypted document and decryption key to {recipient}"
+    }
+    receipt_file.write_text(json.dumps(receipt_data, indent=2), encoding="utf-8")
+    return Result(receipt_file, "application/json", f"{base}_delivery_receipt.json")
+
+
+
 def unlock(work: Path, inputs: list[Path], p: dict) -> Result:
     """Removes encryption from a PDF you can already open.
 
@@ -1776,6 +1880,20 @@ TOOLS: list[Tool] = [
              F("password_new", "password", "New password", required=True),
              F("allow_copy", "checkbox", "Allow copying text"),
              F("allow_modify", "checkbox", "Allow editing and annotation"),
+         ]),
+    Tool("email-secure", "Secure Email Dispatch", "Security",
+         "Send an AES-256 encrypted PDF in Email #1, and the decryption key in Email #2.",
+         email_secure, accept=".pdf,.html,.htm", multi=True, min_files=1, fields=[
+             F("recipient_email", "text", "Recipient email address", required=True,
+               placeholder="recipient@example.com", help="Destination inbox for the secure document and password."),
+             F("email_subject", "text", "Email subject",
+               placeholder="Confidential Document", help="Optional subject line."),
+             F("password_mode", "select", "Password mode", options=[
+                 ("random", "Auto-generate strong 16-character password"),
+                 ("manual", "Specify custom password"),
+             ], default="random"),
+             F("custom_password", "password", "Custom password",
+               placeholder="Enter password (if manual mode selected)", help="Only used if manual password mode is chosen."),
          ]),
     Tool("unlock", "Unlock PDF", "Security",
          "Strip encryption from a PDF whose password you know.",

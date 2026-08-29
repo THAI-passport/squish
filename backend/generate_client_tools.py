@@ -44,6 +44,7 @@ unsupported = {
     "md-to-pdf":        "WeasyPrint",    # needs native cairo/pango
     "sign-pdf":         "pyhanko",       # crypto stack, not Pyodide-installable
     "verify-signature": "pyhanko",
+    "email-secure":     "SMTP Relay / Worker",
 }
 
 # Two shapes are built from one pass over the registry:

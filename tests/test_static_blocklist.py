@@ -27,7 +27,7 @@ BACKEND = Path(__file__).resolve().parents[1] / "backend"
 # Deliberately NOT here: openpyxl and python-pptx — pure Python, installed
 # best-effort via micropip at runtime, so pdf-to-excel / pdf-to-powerpoint
 # stay enabled in static mode.
-NON_WASM_MODULES = {"weasyprint", "pdf2docx", "pyhanko", "ocrmypdf"}
+NON_WASM_MODULES = {"weasyprint", "pdf2docx", "pyhanko", "ocrmypdf", "smtp_manager"}
 
 
 def _unsupported_map() -> dict[str, str]:

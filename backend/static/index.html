@@ -7,6 +7,7 @@
 <meta name="description" content="Merge, split, compress, convert, OCR, protect and redact PDFs. Runs entirely on your own hardware; files are deleted the moment the download finishes.">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/manifest.json">
+<script src="/vault.js"></script>
 
 <style>
 /* Squish UI · self-hosted type stack (no external requests) · palette: ink + cobalt, WCAG-AA verified */
@@ -396,6 +397,335 @@ footer code { font-family:var(--font-mono); }
 .drop-card b { display:block; font-family:var(--font-display); font-size:26px; font-weight:600; }
 .drop-card span { font-size:14px; opacity:.9; }
 
+/* Hallmark · component: vault-dialog-and-secure-email · genre: modern-minimal · theme: cobalt-editorial
+ * states: default · hover · focus · active · disabled · loading · error · success
+ * contrast: pass (46–50)
+ */
+
+/* Vault Nav Button & Badge */
+#vaultNavBtn { position:relative; }
+#vaultNavBadge {
+  position:absolute; top:-3px; right:-3px; width:9px; height:9px; border-radius:50%;
+  background:var(--color-warn); border:2px solid var(--color-panel); transition:.2s;
+}
+#vaultNavBadge.is-unlocked { background:var(--color-ok); }
+#vaultNavBadge[hidden] { display:none; }
+
+/* Vault Modal Backdrop & Dialog */
+.vault-backdrop {
+  position:fixed; inset:0; z-index:150; display:grid; place-items:center; padding:18px;
+  background:color-mix(in srgb,var(--color-ink) 50%, transparent); backdrop-filter:blur(6px);
+}
+.vault-backdrop[hidden]{ display:none; }
+.vault-modal {
+  width:100%; max-width:540px; max-height:88vh; display:flex; flex-direction:column;
+  background:var(--color-panel); border:1px solid var(--color-rule); border-radius:14px;
+  box-shadow:var(--shadow-lg); overflow:hidden; animation:vaultPop .2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes vaultPop { from{opacity:0; transform:scale(0.96) translateY(6px);} to{opacity:1; transform:none;} }
+
+.vault-head {
+  display:flex; align-items:center; justify-content:space-between; padding:16px 20px;
+  border-bottom:1px solid var(--color-rule); background:var(--color-paper);
+}
+.vault-head h3 {
+  margin:0; font-family:var(--font-display); font-size:18px; font-weight:600; color:var(--color-ink);
+  display:flex; align-items:center; gap:8px;
+}
+.vault-head .icon { width:20px; height:20px; color:var(--color-accent-solid); }
+.vault-close {
+  background:none; border:0; cursor:pointer; color:var(--color-ink-muted); padding:6px;
+  border-radius:6px; display:grid; place-items:center; transition:.12s;
+}
+.vault-close:hover { color:var(--color-ink); background:var(--color-rule); }
+
+.vault-body { padding:20px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:16px; }
+
+/* Vault PIN Card */
+.vault-pin-card {
+  text-align:center; padding:24px 16px; background:var(--color-paper); border:1px solid var(--color-rule);
+  border-radius:10px; display:flex; flex-direction:column; align-items:center; gap:12px;
+}
+.vault-pin-card .vault-icon-large {
+  width:46px; height:46px; border-radius:50%; display:grid; place-items:center;
+  background:var(--color-panel); border:1px solid var(--color-rule); color:var(--color-accent-solid);
+}
+.vault-pin-card h4 { margin:0; font-size:16px; font-weight:600; color:var(--color-ink); }
+.vault-pin-card p { margin:0; font-size:13px; color:var(--color-ink-muted); max-width:380px; line-height:1.45; }
+.vault-pin-input {
+  width:180px; text-align:center; letter-spacing:6px; font-family:var(--font-mono); font-size:20px;
+  font-weight:600; padding:10px; border-radius:8px; border:1px solid var(--color-rule-2);
+  background:var(--color-panel); color:var(--color-ink); outline:none; transition:.15s;
+}
+.vault-pin-input:focus { border-color:var(--color-accent); box-shadow:0 0 0 3px var(--color-accent-wash); }
+
+/* Profiles List */
+.vault-profiles-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:2px; }
+.vault-profiles-head h4 { margin:0; font-size:14px; font-weight:600; color:var(--color-ink); }
+.vault-profiles-head .v-count { font-family:var(--font-mono); font-size:11px; color:var(--color-ink-muted); }
+.vault-profile-card {
+  background:var(--color-paper); border:1px solid var(--color-rule); border-radius:10px; padding:13px 15px;
+  display:flex; flex-direction:column; gap:9px; transition:.15s;
+}
+.vault-profile-card:hover { border-color:var(--color-rule-2); }
+.vpc-head { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.vpc-title { font-weight:600; font-size:13.5px; color:var(--color-ink); display:flex; align-items:center; gap:7px; }
+.vpc-title .badge {
+  font-family:var(--font-mono); font-size:10px; font-weight:500; padding:2px 6px; border-radius:4px;
+  background:var(--color-panel); border:1px solid var(--color-rule); color:var(--color-ink-muted);
+}
+.vpc-grid {
+  display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:7px; font-size:12.5px;
+}
+.vpc-item { display:flex; flex-direction:column; }
+.vpc-item span { font-size:10.5px; color:var(--color-ink-muted); }
+.vpc-item b { color:var(--color-ink); font-weight:500; font-family:var(--font-mono); font-size:12px; }
+.vpc-actions {
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+  padding-top:8px; margin-top:2px; border-top:1px solid var(--color-rule);
+}
+.vpc-btn {
+  background:var(--color-panel); border:1px solid var(--color-rule); color:var(--color-ink-2);
+  border-radius:6px; padding:5px 9px; font-size:12px; font-weight:500; cursor:pointer; transition:.12s;
+  display:inline-flex; align-items:center; gap:5px;
+}
+.vpc-btn:hover { border-color:var(--color-accent); color:var(--color-accent-solid); }
+.vpc-btn:focus-visible { outline:2px solid var(--color-accent); outline-offset:2px; }
+.vpc-btn.danger { color:var(--color-err); }
+.vpc-btn.danger:hover { border-color:var(--color-err); background:color-mix(in srgb,var(--color-err) 8%, transparent); }
+
+/* Add Profile Form */
+.vault-add-box {
+  background:var(--color-paper-2); border:1px solid var(--color-rule); border-radius:10px; padding:15px;
+  display:flex; flex-direction:column; gap:11px;
+}
+.vault-add-box h4 { margin:0; font-size:13.5px; font-weight:600; color:var(--color-ink); }
+.vaf-grid { display:grid; grid-template-columns:1fr 100px; gap:9px; }
+@media(max-width:480px){ .vaf-grid { grid-template-columns:1fr; } }
+.vaf-field { display:flex; flex-direction:column; gap:4px; }
+.vaf-field label { font-size:11.5px; font-weight:550; color:var(--color-ink-2); }
+.vaf-field input, .vaf-field select {
+  padding:7px 9px; border-radius:7px; border:1px solid var(--color-rule-2);
+  background:var(--color-panel); color:var(--color-ink); font:inherit; font-size:13px; outline:none; transition:.15s;
+}
+.vaf-field input:focus, .vaf-field select:focus {
+  border-color:var(--color-accent); box-shadow:0 0 0 3px var(--color-accent-wash);
+}
+
+/* Vault Footer & Danger Row */
+.vault-foot {
+  display:flex; align-items:center; justify-content:space-between; padding-top:12px; border-top:1px solid var(--color-rule);
+}
+.vault-wipe-btn {
+  background:none; border:1px solid var(--color-rule); color:var(--color-err); border-radius:7px;
+  padding:6px 11px; font-size:12px; font-weight:500; cursor:pointer; transition:.12s;
+}
+.vault-wipe-btn:hover { border-color:var(--color-err); background:color-mix(in srgb,var(--color-err) 8%, transparent); }
+
+/* Secure Email Workbench Widgets */
+.sec-vault-banner {
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding:11px 14px; border-radius:8px; font-size:13px; line-height:1.4;
+  background:var(--color-paper-2); border:1px solid var(--color-rule); margin-bottom:14px;
+}
+.sec-vault-banner.is-locked { background:color-mix(in srgb,var(--color-warn) 10%, transparent); border-color:color-mix(in srgb,var(--color-warn) 35%, transparent); color:var(--color-warn); }
+.sec-vault-banner.is-unlocked { background:color-mix(in srgb,var(--color-ok) 10%, transparent); border-color:color-mix(in srgb,var(--color-ok) 35%, transparent); color:var(--color-ok-solid); }
+.sec-vault-banner .btn-sm {
+  background:var(--color-panel); border:1px solid currentColor; color:inherit; border-radius:6px;
+  padding:4px 9px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap;
+}
+
+.sec-timeline {
+  background:var(--color-paper); border:1px solid var(--color-rule); border-radius:10px; padding:13px 16px;
+  margin-top:14px; display:flex; flex-direction:column; gap:9px;
+}
+.sec-timeline-head { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--color-ink-muted); font-family:var(--font-mono); }
+.sec-timeline-steps { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.sec-step { display:flex; align-items:center; gap:8px; font-size:12.5px; color:var(--color-ink); }
+.sec-step-num {
+  width:22px; height:22px; border-radius:50%; background:var(--color-accent-wash);
+  color:var(--color-accent-solid); font-family:var(--font-mono); font-size:11px; font-weight:600;
+  display:grid; place-items:center; flex:none;
+}
+.sec-step-arrow { color:var(--color-ink-muted); flex:none; font-size:14px; }
+
+.sec-pw-box {
+  display:flex; align-items:center; gap:8px; background:var(--color-paper); border:1px solid var(--color-rule);
+  border-radius:8px; padding:7px 11px; margin-top:5px;
+}
+.sec-pw-val {
+  font-family:var(--font-mono); font-size:13.5px; font-weight:600; color:var(--color-ink);
+  letter-spacing:1px; flex:1; user-select:all;
+}
+.sec-btn-icon {
+  background:var(--color-panel); border:1px solid var(--color-rule); border-radius:6px; padding:5px;
+  color:var(--color-ink-muted); cursor:pointer; display:grid; place-items:center; transition:.12s;
+}
+.sec-btn-icon:hover { color:var(--color-ink); border-color:var(--color-rule-2); }
+.sec-btn-icon:focus-visible { outline:2px solid var(--color-accent); outline-offset:2px; }
+
+/* Tool Drag & Drop in Sidebar */
+.tool-item {
+  position: relative;
+  cursor: grab;
+  user-select: none;
+  transition: transform 0.16s cubic-bezier(0.2, 0, 0, 1), background 0.12s ease, box-shadow 0.16s ease, opacity 0.16s ease;
+}
+.tool-item:active { cursor: grabbing; }
+.tool-item.is-dragging {
+  opacity: 0.35;
+  transform: scale(0.97);
+  background: var(--color-paper-2);
+  border-color: var(--color-rule-2);
+}
+.tool-item.tool-drop-above {
+  box-shadow: inset 0 3px 0 var(--color-accent);
+  transform: translateY(2px);
+}
+.tool-item.tool-drop-below {
+  box-shadow: inset 0 -3px 0 var(--color-accent);
+  transform: translateY(-2px);
+}
+.tool-item .tool-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-ink-muted);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  margin-right: -2px;
+}
+.tool-item:hover .tool-grip {
+  opacity: 0.7;
+}
+
+.sidebar-subhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.reset-order-btn {
+  background: none;
+  border: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-ink-muted);
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.reset-order-btn:hover {
+  color: var(--color-accent-solid);
+}
+
+/* Email Content Box, HTML File Dropzone & Live Preview */
+.sec-content-box {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  background: var(--color-panel);
+  border: 1px solid var(--color-rule);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-top: 4px;
+}
+.sec-content-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--color-rule);
+  padding-bottom: 8px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.sec-tab-group {
+  display: flex;
+  gap: 4px;
+}
+.sec-tab-btn {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--color-ink-muted);
+  cursor: pointer;
+  transition: .12s;
+}
+.sec-tab-btn.is-active {
+  background: var(--color-paper);
+  border-color: var(--color-rule);
+  color: var(--color-ink);
+}
+.sec-tab-btn:hover:not(.is-active) {
+  color: var(--color-ink);
+}
+
+.sec-html-dropzone {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1.5px dashed var(--color-rule-2);
+  border-radius: 6px;
+  background: var(--color-paper);
+  font-size: 11.5px;
+  color: var(--color-ink-2);
+  cursor: pointer;
+  transition: .15s;
+}
+.sec-html-dropzone:hover, .sec-html-dropzone.over {
+  border-color: var(--color-accent);
+  background: var(--color-accent-wash);
+  color: var(--color-accent-solid);
+}
+.sec-html-dropzone .icon { width: 14px; height: 14px; color: var(--color-accent-solid); }
+
+.sec-body-textarea {
+  min-height: 130px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.sec-preview-card {
+  min-height: 130px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 14px 16px;
+  background: #ffffff;
+  color: #1b1d23;
+  border: 1px solid var(--color-rule);
+  border-radius: 8px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.sec-preview-card h2, .sec-preview-card h3 { color: #1b1d23; margin-top: 0; }
+.sec-preview-card p { color: #33363f; }
+
+.sec-chip-placeholder {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  background: var(--color-paper);
+  border: 1px solid var(--color-rule);
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-ink);
+  cursor: pointer;
+  margin-right: 4px;
+}
+.sec-chip-placeholder:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent-solid);
+}
+
 @media(max-width:820px) {
   .workbench { flex-direction:column; height:auto; }
   .sidebar { width:100%; max-height:none; border-right:0; border-bottom:1px solid var(--color-rule); }
@@ -425,6 +755,13 @@ footer code { font-family:var(--font-mono); }
       <span class="icon" aria-hidden="true"></span><span class="lbl">Search tools</span>
       <kbd>⌘K</kbd>
     </button>
+    <button class="icon-btn" id="vaultNavBtn" onclick="openVaultModal()" aria-label="SMTP Credential Vault">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+      </svg>
+      <span id="vaultNavBadge" hidden></span>
+    </button>
     <button class="icon-btn" id="themeBtn" onclick="toggleTheme()" aria-label="Switch theme"></button>
   </div>
 </nav>
@@ -432,7 +769,10 @@ footer code { font-family:var(--font-mono); }
 <div class="workbench">
   <aside class="sidebar">
     <div class="sidebar-header">
-      <h1>Toolkit</h1>
+      <div class="sidebar-subhead">
+        <h1>Toolkit</h1>
+        <button type="button" class="reset-order-btn" id="resetOrderBtn" onclick="resetToolOrder()" hidden title="Reset tools to default order">Reset order</button>
+      </div>
       <p class="count" id="toolCount">Loading tools…</p>
       <div class="filter-wrap">
         <span class="icon" aria-hidden="true"></span>
@@ -522,6 +862,104 @@ footer code { font-family:var(--font-mono); }
   </main>
 </div>
 
+<div class="vault-backdrop" id="vaultDialog" hidden>
+  <div class="vault-modal" role="dialog" aria-modal="true" aria-labelledby="vaultTitle">
+    <div class="vault-head">
+      <h3 id="vaultTitle">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+        SMTP Credential Vault
+      </h3>
+      <button type="button" class="vault-close" onclick="closeVaultModal()" aria-label="Close vault dialog">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+
+    <div class="vault-body">
+      <!-- Screen 1: Master PIN setup or unlock -->
+      <div id="vaultPinView" class="vault-pin-card">
+        <div class="vault-icon-large">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/><circle cx="12" cy="16" r="1.5"/></svg>
+        </div>
+        <h4 id="vaultPinTitle">Enter Master PIN</h4>
+        <p id="vaultPinDesc">Your SMTP parameters are encrypted locally in your browser with AES-256-GCM. Enter your PIN to unlock.</p>
+        <form id="vaultPinForm" onsubmit="handleVaultPinSubmit(event)">
+          <input type="password" id="vaultPinInput" class="vault-pin-input" placeholder="••••" maxlength="12" autocomplete="off" required>
+          <div style="margin-top:14px; display:flex; gap:8px; justify-content:center;">
+            <button type="submit" class="btn--primary" id="vaultPinSubmitBtn">Unlock Vault</button>
+          </div>
+        </form>
+      </div>
+
+      <!-- Screen 2: Unlocked Profile Manager -->
+      <div id="vaultManageView" hidden style="display:flex; flex-direction:column; gap:16px;">
+        <div class="vault-profiles-head">
+          <h4 id="vaultProfilesTitle">Configured Profiles</h4>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <span class="v-count" id="vaultProfileCount">0 / 5</span>
+            <button type="button" class="vpc-btn" onclick="handleLockVault()">Lock Vault</button>
+          </div>
+        </div>
+
+        <div id="vaultProfilesList" style="display:flex; flex-direction:column; gap:10px;"></div>
+
+        <!-- Add Profile Box -->
+        <div class="vault-add-box" id="vaultAddBox">
+          <h4 id="vaultAddTitle">Add New SMTP Profile</h4>
+          <form id="vaultAddForm" onsubmit="handleAddProfile(event)" style="display:flex; flex-direction:column; gap:10px;">
+            <div class="vaf-field">
+              <label for="vaf_name">Profile Nickname</label>
+              <input type="text" id="vaf_name" placeholder="e.g. Work Office 365, Internal Relay" required>
+            </div>
+            <div class="vaf-grid">
+              <div class="vaf-field">
+                <label for="vaf_server">SMTP Server Host</label>
+                <input type="text" id="vaf_server" placeholder="smtp.office365.com or 10.x.x.x" required>
+              </div>
+              <div class="vaf-field">
+                <label for="vaf_port">Port</label>
+                <input type="number" id="vaf_port" value="587" min="1" max="65535" required>
+              </div>
+            </div>
+            <div class="vaf-field">
+              <label for="vaf_username">Sender Email (Username)</label>
+              <input type="email" id="vaf_username" placeholder="sender@company.com" required>
+            </div>
+            <div class="vaf-field">
+              <label for="vaf_password">SMTP Password / App Password (Insert-Only)</label>
+              <input type="password" id="vaf_password" placeholder="••••••••••••" required>
+            </div>
+            <div class="vaf-field">
+              <label for="vaf_from_name">Display Name (MAIL_FROM_NAME)</label>
+              <input type="text" id="vaf_from_name" placeholder="e.g. Finance Team, Legal Dispatch">
+            </div>
+            <div class="vaf-field">
+              <label for="vaf_security">Connection Security</label>
+              <select id="vaf_security">
+                <option value="starttls">STARTTLS (Recommended for Port 587)</option>
+                <option value="ssl">SSL / TLS (Direct on Port 465)</option>
+                <option value="plain">Plain / Unencrypted (Port 25 Relay)</option>
+              </select>
+            </div>
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:6px;">
+              <button type="button" class="vpc-btn" id="vafTestBtn" onclick="handleTestNewProfile()">Test Connection</button>
+              <button type="submit" class="btn--primary" id="vafSaveBtn">Save Profile</button>
+            </div>
+            <div id="vafTestStatus" style="font-size:12px; font-family:var(--font-mono); margin-top:2px;" hidden></div>
+          </form>
+        </div>
+
+        <div class="vault-foot">
+          <span style="font-size:11.5px; color:var(--color-ink-muted);">Encrypted with AES-256-GCM</span>
+          <button type="button" class="vault-wipe-btn" onclick="handleWipeVault()">Wipe All Credentials</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="dialog-backdrop" id="cmdDialog" hidden>
   <div class="cmd-palette" role="dialog" aria-modal="true" aria-label="Command Palette">
     <div class="cmd-hint" id="cmdHint" hidden></div>
@@ -558,7 +996,12 @@ const UI = {
   upload:'<path d="M12 15V4m0 0-4 4m4-4 4 4"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>',
   check:'<circle cx="12" cy="12" r="8.4"/><path d="M8.3 12.3 11 15l4.7-5"/>',
   download:'<path d="M12 4v11m0 0-4-4m4 4 4-4"/><path d="M5 19h14"/>',
-  run:'<path d="M8 6.5v11l9-5.5z"/>'
+  run:'<path d="M8 6.5v11l9-5.5z"/>',
+  copy:'<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  refresh:'<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/>',
+  key:'<circle cx="7.5" cy="15.5" r="4.5"/><path d="m21 3-9.5 9.5M15.5 7.5l3 3M18.5 4.5l2 2"/>',
+  lock:'<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  trash:'<path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>'
 };
 const PG = '<path d="M6.5 3.5h7.7L18 7.3v12.2a1 1 0 0 1-1 1H6.5a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z"/><path d="M14 3.5V7.5h4"/>';
 const ICONS = {
@@ -577,7 +1020,7 @@ const ICONS = {
   'ocr':'<circle cx="10.8" cy="10.8" r="6.4"/><path d="M15.6 15.6 20 20"/><path d="M8.3 9.4h5M8.3 12h3"/>',
   /* Convert to PDF */
   'jpg-to-pdf':'<rect x="3.5" y="4.4" width="9" height="9" rx="1.4"/><circle cx="6.6" cy="7.5" r="1.1"/><path d="M4 12.4 7 9.6l2.5 2 1.3-1"/><path d="M17 10.5v6.4m0 0-2-2m2 2 2-2"/>',
-  'office-to-pdf':'<rect x="4.6" y="3.4" width="11" height="10" rx="1.3"/><path d="M4.6 7h11M9 3.4v10M12.3 3.4v10"/><path d="M17 15v5.4m0 0-2.1-2.1M17 20.4l2.1-2.1"/>',
+  'office-to-pdf':'<rect x="4.6" y="3.4" width="11" height="10" rx="1.3"/><path d="M4.6 7h11M9 3.4v10M12.3 3.4v10"/><path d="M17 15v5.4m0 0-2-2.1-2.1M17 20.4l2.1-2.1"/>',
   'md-to-pdf':'<rect x="3.4" y="6" width="17.2" height="9" rx="1.6"/><path d="M6.4 12.2V8.8l2 2 2-2v3.4"/><path d="M14.6 8.8v3.4m0 0-1.4-1.4M14.6 12.2l1.4-1.4"/><path d="M9 18.5h6m0 0-1.8-1.8M15 18.5l-1.8 1.8"/>',
   /* Convert from PDF */
   'pdf-to-jpg':'<rect x="7.4" y="8.4" width="10.2" height="9.4" rx="1.4"/><circle cx="10.6" cy="11.6" r="1.1"/><path d="M7.9 16.6 11 13.8l2.5 2 1.3-1"/><path d="M5 6.4h7m0 0L9.4 3.9M12 6.4 9.4 9"/>',
@@ -600,6 +1043,7 @@ const ICONS = {
   /* Security */
   'rasterise':'<rect x="3.8" y="4.4" width="16.4" height="15.2" rx="1.6"/><path d="M8 8.4v.01M12 8.4v.01M16 8.4v.01M8 12v.01M12 12v.01M16 12v.01M8 15.6v.01M12 15.6v.01M16 15.6v.01"/>',
   'protect':'<rect x="4.8" y="10.4" width="14.4" height="9.6" rx="2.2"/><path d="M8 10.4V8a4 4 0 0 1 8 0v2.4"/><circle cx="12" cy="15" r="1.3"/>',
+  'email-secure':'<path d="M22 13V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v12c0 1.1.9 2 2 2h8"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/><rect x="16" y="14" width="6" height="5" rx="1"/><path d="M17 14v-1.5a1.5 1.5 0 0 1 3 0V14"/>',
   'unlock':'<rect x="4.8" y="10.4" width="14.4" height="9.6" rx="2.2"/><path d="M8 10.4V8a4 4 0 0 1 7.7-1.6"/><circle cx="12" cy="15" r="1.3"/>',
   'redact':'<path d="M6 3.5h8L18 7v12.5a1 1 0 0 1-1 1H6.5a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z"/><path d="M14 3.5V7h4"/><path d="M7.6 9.4h3.2M14 9.4h2"/><rect x="7.6" y="11.4" width="8.8" height="2.6" rx=".5" fill="currentColor" stroke="none"/><path d="M7.6 16.4h6"/>',
   'auto-redact':'<path d="M6 4.5h7.5L17 8v11a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5.5a1 1 0 0 1 1-1Z"/><path d="M13.5 4.5V8H17"/><rect x="7" y="11" width="8" height="2.4" rx=".5" fill="currentColor" stroke="none"/><path d="M7 16h5"/><path d="M18.6 3.4l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6L16.4 5.6l1.6-.6Z" fill="currentColor" stroke="none"/>',
@@ -871,7 +1315,73 @@ function updateCount(){
   else { const n = pp.sel.size; el.textContent = pp.mode === 'remove' ? `${n} to remove` : (n ? `${n} selected` : `all ${pp.total}`); }
 }
 
-/* ------------------------------------------------------- Rendering & Tools --- */
+/* ------------------------------------------------------- Tool Ordering & Drag --- */
+let toolDragKey = null;
+
+function applySavedToolOrder(){
+  try{
+    const saved = localStorage.getItem('squish_tools_order');
+    if(saved){
+      const keys = JSON.parse(saved);
+      if(Array.isArray(keys) && keys.length){
+        const map = new Map(TOOLS.map(t => [t.key, t]));
+        const ordered = [];
+        for(const k of keys){
+          if(map.has(k)){
+            ordered.push(map.get(k));
+            map.delete(k);
+          }
+        }
+        for(const t of map.values()){
+          ordered.push(t);
+        }
+        TOOLS = ordered;
+      }
+    }
+  }catch{}
+  updateResetOrderBtn();
+}
+
+function saveToolOrder(){
+  try{
+    localStorage.setItem('squish_tools_order', JSON.stringify(TOOLS.map(t => t.key)));
+  }catch{}
+  updateResetOrderBtn();
+}
+
+function resetToolOrder(){
+  localStorage.removeItem('squish_tools_order');
+  if(window.RAW_TOOLS_ORDER){
+    const map = new Map(TOOLS.map(t => [t.key, t]));
+    TOOLS = window.RAW_TOOLS_ORDER.map(k => map.get(k)).filter(Boolean);
+  }
+  render();
+  buildPopular();
+  updateResetOrderBtn();
+  toast('Tool order reset to default', 'ok');
+}
+
+function updateResetOrderBtn(){
+  const btn = document.getElementById('resetOrderBtn');
+  if(btn){
+    btn.hidden = !localStorage.getItem('squish_tools_order');
+  }
+}
+
+function moveTool(fromKey, toKey, before){
+  if(fromKey === toKey) return;
+  const fromIdx = TOOLS.findIndex(t => t.key === fromKey);
+  if(fromIdx === -1) return;
+  const [item] = TOOLS.splice(fromIdx, 1);
+  let toIdx = TOOLS.findIndex(t => t.key === toKey);
+  if(!before) toIdx += 1;
+  TOOLS.splice(toIdx, 0, item);
+  saveToolOrder();
+  render();
+  buildPopular();
+  announce(`Moved ${item.name}`);
+}
+
 function matchesFilter(t){
   if(!toolFilter) return true;
   return (t.name + ' ' + t.blurb + ' ' + t.group).toLowerCase().includes(toolFilter);
@@ -895,6 +1405,8 @@ function render(){
       b.className = 'tool-item';
       if(current && current.key === t.key) b.classList.add('is-active');
       b.id = 'tool-' + t.key;
+      b.setAttribute('role', 'button');
+      b.setAttribute('aria-label', `${t.name}: ${t.blurb}`);
 
       if(!t.available){ b.setAttribute('aria-disabled', 'true'); b.classList.add('is-off'); }
 
@@ -912,6 +1424,46 @@ function render(){
         b.append(why);
       }
 
+      // Drag Grip handle
+      const grip = document.createElement('span');
+      grip.className = 'tool-grip';
+      grip.setAttribute('aria-hidden', 'true');
+      grip.innerHTML = svg(UI.grip);
+      b.append(grip);
+
+      // Drag & drop event listeners
+      b.draggable = !toolFilter;
+      b.addEventListener('dragstart', ev => {
+        toolDragKey = t.key;
+        b.classList.add('is-dragging');
+        ev.dataTransfer.effectAllowed = 'move';
+        ev.dataTransfer.setData('text/plain', t.key);
+      });
+      b.addEventListener('dragend', () => {
+        toolDragKey = null;
+        document.querySelectorAll('.tool-item').forEach(el => el.classList.remove('is-dragging', 'tool-drop-above', 'tool-drop-below'));
+      });
+      b.addEventListener('dragover', ev => {
+        ev.preventDefault();
+        if(toolDragKey === null || toolDragKey === t.key) return;
+        const rect = b.getBoundingClientRect();
+        const before = ev.clientY < rect.top + rect.height / 2;
+        b.classList.toggle('tool-drop-above', before);
+        b.classList.toggle('tool-drop-below', !before);
+      });
+      b.addEventListener('dragleave', () => {
+        b.classList.remove('tool-drop-above', 'tool-drop-below');
+      });
+      b.addEventListener('drop', ev => {
+        ev.preventDefault();
+        b.classList.remove('tool-drop-above', 'tool-drop-below');
+        if(toolDragKey === null || toolDragKey === t.key) return;
+        const rect = b.getBoundingClientRect();
+        const before = ev.clientY < rect.top + rect.height / 2;
+        moveTool(toolDragKey, t.key, before);
+        toolDragKey = null;
+      });
+
       b.onclick = () => {
         if(!t.available){ toast(`${t.name} needs ${t.needs}, which this build does not include.`, 'err'); return; }
         open_(t.key);
@@ -924,6 +1476,7 @@ function render(){
     nm.textContent = toolFilter ? `No tools match “${toolFilter}”.` : 'No tools available.';
     box.append(nm);
   }
+  updateResetOrderBtn();
 }
 
 function buildPopular(){
@@ -991,8 +1544,33 @@ function home(){
   history.replaceState(null, '', location.pathname);
 }
 
+let generatedPassword = '';
+function generateStrongPassword(){
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnopqrstuvwxyz';
+  const digits = '23456789';
+  const symbols = '!@#$%^&*';
+  const all = upper + lower + digits + symbols;
+  let pw = '';
+  pw += upper[Math.floor(Math.random() * upper.length)];
+  pw += lower[Math.floor(Math.random() * lower.length)];
+  pw += digits[Math.floor(Math.random() * digits.length)];
+  pw += symbols[Math.floor(Math.random() * symbols.length)];
+  for(let i = 0; i < 12; i++){
+    pw += all[Math.floor(Math.random() * all.length)];
+  }
+  generatedPassword = pw.split('').sort(() => 0.5 - Math.random()).join('');
+  return generatedPassword;
+}
+
 function buildFields(){
   const box = document.getElementById('fields'); box.innerHTML = '';
+  
+  if(current.key === 'email-secure'){
+    buildSecureEmailFields(box);
+    return;
+  }
+  
   for(const f of current.fields){
     const d = document.createElement('div'); d.className = 'field' + (['textarea','text'].includes(f.kind) ? ' wide' : '');
     const id = 'f_' + f.name;
@@ -1015,6 +1593,369 @@ function buildFields(){
     }
     box.append(d);
   }
+}
+
+function updateEmailPreview(){
+  const ta = document.getElementById('f_email_body_html');
+  const card = document.getElementById('secPreviewCard');
+  if(!ta || !card) return;
+  const content = ta.value.trim();
+  const subj = (document.getElementById('f_email_subject') || {}).value || 'Secure Document Attached';
+  const fname = files.length ? files[0].name : 'document.pdf';
+
+  if(!content){
+    card.innerHTML = `
+      <div style="color:var(--color-ink-muted); font-size:12px; margin-bottom:8px;">[Default Template Preview]</div>
+      <h3 style="color:#1b1d23; margin-top:0;">${subj}</h3>
+      <p style="color:#33363f; line-height:1.5;">You have received an encrypted PDF document: <strong>${fname}</strong>.</p>
+      <div style="background:#f7f6f3; padding:12px 14px; border-radius:6px; margin:12px 0; border-left:4px solid #2f5fd8;">
+        <p style="margin:0; color:#1b1d23; font-size:13px;"><strong>Note:</strong> This document is password-protected. The decryption key will be sent in a separate message shortly.</p>
+      </div>
+    `;
+  } else if(content.includes('<') && content.includes('>')){
+    // User-provided HTML
+    card.innerHTML = content;
+  } else {
+    // Plain text formatted
+    const paras = content.split('\n').map(l => l.trim() ? `<p style="margin:6px 0; color:#33363f;">${l}</p>` : '').join('');
+    card.innerHTML = `
+      <h3 style="color:#1b1d23; margin-top:0;">${subj}</h3>
+      ${paras}
+      <div style="background:#f7f6f3; padding:10px 14px; border-radius:6px; margin:12px 0; border-left:4px solid #2f5fd8; font-size:12.5px;">
+        <strong>Attached:</strong> ${fname} (AES-256 Protected)
+      </div>
+    `;
+  }
+}
+
+function insertE2Placeholder(ph){
+  const el = document.getElementById('f_email2_body');
+  if(!el) return;
+  const start = el.selectionStart || el.value.length;
+  const end = el.selectionEnd || el.value.length;
+  el.value = el.value.substring(0, start) + ph + el.value.substring(end);
+  el.focus();
+  el.selectionStart = el.selectionEnd = start + ph.length;
+}
+
+function buildSecureEmailFields(box){
+  const isUnlocked = window.SquishVault && SquishVault.isUnlocked();
+  const profiles = isUnlocked ? SquishVault.getMaskedProfiles() : [];
+  
+  // 1. Vault status banner
+  const banner = document.createElement('div');
+  banner.className = 'sec-vault-banner ' + (isUnlocked ? 'is-unlocked' : 'is-locked');
+  banner.innerHTML = `
+    <div>
+      <b>${isUnlocked ? `Vault Unlocked (${profiles.length} saved profile${profiles.length === 1 ? '' : 's'})` : 'Vault Locked'}</b>
+      <div style="font-size:12px; opacity:0.9;">${isUnlocked ? 'Stored credentials are encrypted with AES-256-GCM.' : 'Unlock your vault to use saved SMTP accounts, or enter one-time settings below.'}</div>
+    </div>
+    <button type="button" class="btn-sm" onclick="openVaultModal()">${isUnlocked ? 'Manage Vault' : 'Unlock Vault'}</button>
+  `;
+  box.append(banner);
+
+  // 2. Profile Selector
+  const profField = document.createElement('div'); profField.className = 'field wide';
+  profField.innerHTML = `
+    <label for="f_smtp_profile_select">SMTP Account / Relay</label>
+    <select id="f_smtp_profile_select">
+      ${profiles.map(p => `<option value="${p.id}">Saved: ${p.name} (${p.username})</option>`).join('')}
+      <option value="__manual__"${profiles.length === 0 ? ' selected' : ''}>Manual / One-Time SMTP Parameters</option>
+    </select>
+    <span class="hint">Credentials are transmitted strictly for this dispatch and never stored in plain text.</span>
+  `;
+  box.append(profField);
+
+  // 3. Manual SMTP Parameters Container (collapsible)
+  const manualBox = document.createElement('div');
+  manualBox.id = 'secManualBox';
+  manualBox.className = 'vault-add-box';
+  manualBox.style.display = (profiles.length === 0 || !isUnlocked) ? 'flex' : 'none';
+  manualBox.innerHTML = `
+    <h4 style="margin:0; font-size:13px; font-weight:600; color:var(--color-ink);">One-Time SMTP Parameters</h4>
+    <div class="vaf-grid">
+      <div class="vaf-field">
+        <label for="f_mail_server">SMTP Server Host</label>
+        <input type="text" id="f_mail_server" placeholder="smtp.office365.com or 10.x.x.x">
+      </div>
+      <div class="vaf-field">
+        <label for="f_mail_port">Port</label>
+        <input type="number" id="f_mail_port" value="587">
+      </div>
+    </div>
+    <div class="vaf-field">
+      <label for="f_mail_username">Sender Email (Username)</label>
+      <input type="email" id="f_mail_username" placeholder="sender@company.com">
+    </div>
+    <div class="vaf-field">
+      <label for="f_mail_password">SMTP Password / App Password</label>
+      <input type="password" id="f_mail_password" placeholder="••••••••••••">
+    </div>
+    <div class="vaf-grid">
+      <div class="vaf-field">
+        <label for="f_mail_from_name">Display Name (MAIL_FROM_NAME)</label>
+        <input type="text" id="f_mail_from_name" placeholder="e.g. Finance Team">
+      </div>
+      <div class="vaf-field">
+        <label for="f_mail_security">Security</label>
+        <select id="f_mail_security">
+          <option value="starttls">STARTTLS (587)</option>
+          <option value="ssl">SSL (465)</option>
+          <option value="plain">Plain (25)</option>
+        </select>
+      </div>
+    </div>
+  `;
+  box.append(manualBox);
+
+  const selEl = profField.querySelector('#f_smtp_profile_select');
+  selEl.onchange = () => {
+    manualBox.style.display = selEl.value === '__manual__' ? 'flex' : 'none';
+  };
+
+  // 4. Recipient Email & Subject
+  const recipField = document.createElement('div'); recipField.className = 'field wide';
+  recipField.innerHTML = `
+    <label for="f_recipient_email">Recipient Email Address</label>
+    <input type="email" id="f_recipient_email" placeholder="recipient@example.com" required>
+    <span class="hint">Destination inbox for both the encrypted document and the subsequent password.</span>
+  `;
+  box.append(recipField);
+
+  const subjField = document.createElement('div'); subjField.className = 'field wide';
+  subjField.innerHTML = `
+    <label for="f_email_subject">Email Subject</label>
+    <input type="text" id="f_email_subject" placeholder="Confidential Document">
+    <span class="hint">Subject line for Email #1. Email #2 prefixes [Decryption Key].</span>
+  `;
+  box.append(subjField);
+
+  // 5. Rich Email #1 Content Box with Tabbed Live Preview & Direct HTML File Dropzone
+  const contentField = document.createElement('div'); contentField.className = 'field wide';
+  contentField.innerHTML = `
+    <label for="f_email_body_html">Email #1 Message & Body (HTML / Text)</label>
+    <div class="sec-content-box" id="secContentBox">
+      <div class="sec-content-tabs">
+        <div class="sec-tab-group">
+          <button type="button" class="sec-tab-btn is-active" id="secTabEditBtn">✏️ Edit HTML / Text</button>
+          <button type="button" class="sec-tab-btn" id="secTabPreviewBtn">👁️ Live Email Preview</button>
+        </div>
+        <label class="sec-html-dropzone" id="secHtmlDropzone" title="Drag & drop any .html, .htm, or .txt file here, or click to choose">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="12" y1="18" x2="12" y2="12"/>
+            <polyline points="9 15 12 12 15 15"/>
+          </svg>
+          <span id="secHtmlDropLabel">Drop <b>.html</b> file or browse</span>
+          <input type="file" id="secHtmlFileInput" accept=".html,.htm,.txt" style="display:none">
+        </label>
+      </div>
+      
+      <div id="secEditPane">
+        <textarea id="f_email_body_html" class="sec-body-textarea" placeholder="Optional: Enter custom email body or drop/paste HTML template here..."></textarea>
+        <span class="hint" style="margin-top:4px; display:block;">Supports HTML tags (&lt;p&gt;, &lt;b&gt;, &lt;table&gt;) or plain text.</span>
+      </div>
+      
+      <div id="secPreviewPane" style="display:none;">
+        <div class="sec-preview-card" id="secPreviewCard"></div>
+      </div>
+    </div>
+  `;
+  box.append(contentField);
+
+  // Wire HTML Tabs & Preview
+  const tabEdit = contentField.querySelector('#secTabEditBtn');
+  const tabPrev = contentField.querySelector('#secTabPreviewBtn');
+  const editPane = contentField.querySelector('#secEditPane');
+  const prevPane = contentField.querySelector('#secPreviewPane');
+  const bodyInput = contentField.querySelector('#f_email_body_html');
+
+  tabEdit.onclick = () => {
+    tabEdit.classList.add('is-active'); tabPrev.classList.remove('is-active');
+    editPane.style.display = 'block'; prevPane.style.display = 'none';
+  };
+  tabPrev.onclick = () => {
+    tabPrev.classList.add('is-active'); tabEdit.classList.remove('is-active');
+    editPane.style.display = 'none'; prevPane.style.display = 'block';
+    updateEmailPreview();
+  };
+  bodyInput.addEventListener('input', () => {
+    if(prevPane.style.display === 'block') updateEmailPreview();
+  });
+
+  // Wire HTML File Dropzone
+  const dropzone = contentField.querySelector('#secHtmlDropzone');
+  const fileInput = contentField.querySelector('#secHtmlFileInput');
+  const dropLabel = contentField.querySelector('#secHtmlDropLabel');
+
+  function loadHtmlFile(file){
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      bodyInput.value = ev.target.result;
+      updateEmailPreview();
+      dropLabel.innerHTML = `Loaded <b>${file.name}</b> (${fmt(file.size)})`;
+      toast(`Loaded ${file.name}`, 'ok');
+    };
+    reader.readAsText(file);
+  }
+
+  fileInput.onchange = () => {
+    if(fileInput.files.length) loadHtmlFile(fileInput.files[0]);
+  };
+
+  ['dragenter','dragover'].forEach(evName => {
+    dropzone.addEventListener(evName, ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      dropzone.classList.add('over');
+    });
+    bodyInput.addEventListener(evName, ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      dropzone.classList.add('over');
+    });
+  });
+
+  ['dragleave','drop'].forEach(evName => {
+    dropzone.addEventListener(evName, ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      dropzone.classList.remove('over');
+    });
+    bodyInput.addEventListener(evName, ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      dropzone.classList.remove('over');
+    });
+  });
+
+  dropzone.addEventListener('drop', ev => {
+    if(ev.dataTransfer && ev.dataTransfer.files.length){
+      loadHtmlFile(ev.dataTransfer.files[0]);
+    }
+  });
+  bodyInput.addEventListener('drop', ev => {
+    if(ev.dataTransfer && ev.dataTransfer.files.length){
+      loadHtmlFile(ev.dataTransfer.files[0]);
+    }
+  });
+
+  // 6. Password Generator Widget
+  if(!generatedPassword) generateStrongPassword();
+  const pwField = document.createElement('div'); pwField.className = 'field wide';
+  pwField.innerHTML = `
+    <label>PDF Decryption Password</label>
+    <div style="display:flex; gap:12px; margin:4px 0 8px; font-size:13px;">
+      <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:normal;">
+        <input type="radio" name="pw_mode_radio" value="random" checked> Auto-generate strong password
+      </label>
+      <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:normal;">
+        <input type="radio" name="pw_mode_radio" value="manual"> Specify custom password
+      </label>
+    </div>
+    <div id="secRandomPwWrap">
+      <div class="sec-pw-box">
+        <span class="sec-pw-val" id="secGeneratedPwVal">${generatedPassword}</span>
+        <button type="button" class="sec-btn-icon" id="secRegenBtn" title="Generate another strong password">${svg(UI.refresh)}</button>
+        <button type="button" class="sec-btn-icon" id="secCopyBtn" title="Copy password to clipboard">${svg(UI.copy)}</button>
+      </div>
+      <span class="hint" style="margin-top:4px; display:block;">16-character cryptographic AES-256 key automatically transmitted in Email #2.</span>
+    </div>
+    <div id="secManualPwWrap" style="display:none; margin-top:6px;">
+      <input type="password" id="f_custom_password" placeholder="Enter custom password (min 4 characters)">
+      <span class="hint">This password will be applied to the PDF and sent to the recipient in Email #2.</span>
+    </div>
+    <input type="hidden" id="f_password_mode" value="random">
+  `;
+  box.append(pwField);
+
+  const radRandom = pwField.querySelector('input[value="random"]');
+  const radManual = pwField.querySelector('input[value="manual"]');
+  const rndWrap = pwField.querySelector('#secRandomPwWrap');
+  const manWrap = pwField.querySelector('#secManualPwWrap');
+  const hidMode = pwField.querySelector('#f_password_mode');
+
+  radRandom.onchange = () => {
+    rndWrap.style.display = 'block'; manWrap.style.display = 'none'; hidMode.value = 'random';
+  };
+  radManual.onchange = () => {
+    rndWrap.style.display = 'none'; manWrap.style.display = 'block'; hidMode.value = 'manual';
+  };
+  pwField.querySelector('#secRegenBtn').onclick = () => {
+    generateStrongPassword();
+    pwField.querySelector('#secGeneratedPwVal').textContent = generatedPassword;
+    toast('Generated new strong password', 'ok');
+  };
+  pwField.querySelector('#secCopyBtn').onclick = () => {
+    navigator.clipboard.writeText(generatedPassword).then(() => {
+      toast('Password copied to clipboard', 'ok');
+    }).catch(() => {});
+  };
+
+  // 7. Email #2 Customization Card & Delay Setting
+  const e2Field = document.createElement('div'); e2Field.className = 'field wide';
+  e2Field.innerHTML = `
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
+      <label>Email #2 Customization & Delivery Timing</label>
+      <button type="button" class="btn-sm" id="secToggleE2Btn" style="font-size:11px; padding:3px 8px; background:var(--color-paper); border:1px solid var(--color-rule); border-radius:5px; cursor:pointer;">Customize Email #2</button>
+    </div>
+    <div id="secE2Wrap" style="display:none; background:var(--color-panel); border:1px solid var(--color-rule); border-radius:8px; padding:12px; margin-top:4px; flex-direction:column; gap:10px;">
+      <div class="field">
+        <label for="f_email2_subject">Email #2 Subject</label>
+        <input type="text" id="f_email2_subject" placeholder="[Decryption Key] Password for: {{doc_name}}">
+      </div>
+      <div class="field">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:2px;">
+          <label for="f_email2_body">Email #2 Body Template</label>
+          <div>
+            <span class="sec-chip-placeholder" onclick="insertE2Placeholder('{{password}}')" title="Click to insert {{password}} placeholder">+ {{password}}</span>
+            <span class="sec-chip-placeholder" onclick="insertE2Placeholder('{{doc_name}}')" title="Click to insert {{doc_name}} placeholder">+ {{doc_name}}</span>
+          </div>
+        </div>
+        <textarea id="f_email2_body" style="min-height:90px; font-family:var(--font-mono); font-size:12px;" placeholder="Your password to open the protected PDF ({{doc_name}}) is:&#10;&#10;{{password}}&#10;&#10;Please keep this password secure."></textarea>
+        <span class="hint">Use {{password}} and {{doc_name}} placeholders to dynamically embed the decryption key.</span>
+      </div>
+      <div class="field">
+        <label for="f_delay_seconds">Dispatch Delay between Email #1 and Email #2</label>
+        <select id="f_delay_seconds" style="width:auto; max-width:240px;">
+          <option value="2.5" selected>2.5 seconds (Standard)</option>
+          <option value="5">5 seconds</option>
+          <option value="10">10 seconds</option>
+          <option value="30">30 seconds</option>
+        </select>
+      </div>
+    </div>
+  `;
+  box.append(e2Field);
+
+  const toggleE2Btn = e2Field.querySelector('#secToggleE2Btn');
+  const e2Wrap = e2Field.querySelector('#secE2Wrap');
+  toggleE2Btn.onclick = () => {
+    const isHidden = e2Wrap.style.display === 'none';
+    e2Wrap.style.display = isHidden ? 'flex' : 'none';
+    toggleE2Btn.textContent = isHidden ? 'Hide Email #2 Options' : 'Customize Email #2';
+  };
+
+  // 8. Two-Step Delivery Timeline Card
+  const timeline = document.createElement('div'); timeline.className = 'sec-timeline';
+  timeline.innerHTML = `
+    <div class="sec-timeline-head">Two-Step Secure Dispatch Workflow</div>
+    <div class="sec-timeline-steps">
+      <div class="sec-step">
+        <span class="sec-step-num">1</span>
+        <span><b>Email #1:</b> Encrypted PDF attached (+ HTML body)</span>
+      </div>
+      <span class="sec-step-arrow">→</span>
+      <div class="sec-step">
+        <span class="sec-step-num">2</span>
+        <span><b>Delay:</b> 2.5s</span>
+      </div>
+      <span class="sec-step-arrow">→</span>
+      <div class="sec-step">
+        <span class="sec-step-num">3</span>
+        <span><b>Email #2:</b> Decryption key notice</span>
+      </div>
+    </div>
+  `;
+  box.append(timeline);
 }
 
 /* --------------------------------------------------------- file input --- */
@@ -1131,14 +2072,57 @@ async function submit(){
 
   const fd = new FormData();
   for(const f of files) fd.append('files', f, f.name);
-  for(const f of current.fields){
-    const el = document.getElementById('f_' + f.name); if(!el) continue;
-    if(f.kind === 'checkbox'){ if(el.checked) fd.append(f.name, '1'); }
-    else if(el.value !== '') fd.append(f.name, el.value);
+  
+  if(current.key === 'email-secure'){
+    const selEl = document.getElementById('f_smtp_profile_select');
+    const profId = selEl ? selEl.value : '__manual__';
+    if(profId !== '__manual__' && window.SquishVault && SquishVault.isUnlocked()){
+      try{
+        const pObj = SquishVault.getProfileForDispatch(profId);
+        fd.append('smtp_profile_json', JSON.stringify(pObj));
+      }catch{}
+    }else{
+      const s = document.getElementById('f_mail_server'); if(s && s.value) fd.append('mail_server', s.value);
+      const po = document.getElementById('f_mail_port'); if(po && po.value) fd.append('mail_port', po.value);
+      const u = document.getElementById('f_mail_username'); if(u && u.value) fd.append('mail_username', u.value);
+      const pw = document.getElementById('f_mail_password'); if(pw && pw.value) fd.append('mail_password', pw.value);
+      const fn = document.getElementById('f_mail_from_name'); if(fn && fn.value) fd.append('mail_from_name', fn.value);
+      const sec = document.getElementById('f_mail_security'); if(sec && sec.value) fd.append('mail_security', sec.value);
+    }
+    
+    const recip = document.getElementById('f_recipient_email'); if(recip && recip.value) fd.append('recipient_email', recip.value);
+    const subj = document.getElementById('f_email_subject'); if(subj && subj.value) fd.append('email_subject', subj.value);
+    
+    const bHtml = document.getElementById('f_email_body_html');
+    if(bHtml && bHtml.value.trim()) fd.append('email_body_html', bHtml.value.trim());
+
+    const e2s = document.getElementById('f_email2_subject');
+    if(e2s && e2s.value.trim()) fd.append('email2_subject', e2s.value.trim());
+
+    const e2b = document.getElementById('f_email2_body');
+    if(e2b && e2b.value.trim()) fd.append('email2_body', e2b.value.trim());
+
+    const ds = document.getElementById('f_delay_seconds');
+    if(ds && ds.value) fd.append('delay_seconds', ds.value);
+
+    const pwMode = document.getElementById('f_password_mode')?.value || 'random';
+    fd.append('password_mode', pwMode);
+    if(pwMode === 'random'){
+      fd.append('custom_password', generatedPassword);
+    }else{
+      const custPw = document.getElementById('f_custom_password');
+      if(custPw && custPw.value) fd.append('custom_password', custPw.value);
+    }
+  }else{
+    for(const f of current.fields){
+      const el = document.getElementById('f_' + f.name); if(!el) continue;
+      if(f.kind === 'checkbox'){ if(el.checked) fd.append(f.name, '1'); }
+      else if(el.value !== '') fd.append(f.name, el.value);
+    }
   }
 
   try{
-    let blob, name;
+    let blob, name, isDeliveryReceipt = false, receiptObj = null;
     if(isStatic) {
       if (!window.runPyodideTool) throw new Error("In-browser tools are still loading — try again in a moment.");
       const result = await window.runPyodideTool(current.key, files, fd);
@@ -1151,24 +2135,50 @@ async function submit(){
         try{ const j = await r.json(); if(j.detail) msg = j.detail; }catch{}
         throw new Error(msg);
       }
-      blob = await r.blob();
-      name = filenameOf(r) || (current.key + '.out');
+      if(current.key === 'email-secure'){
+        try {
+          receiptObj = await r.json();
+          isDeliveryReceipt = true;
+        } catch {
+          blob = await r.blob();
+          name = filenameOf(r) || (current.key + '.out');
+        }
+      } else {
+        blob = await r.blob();
+        name = filenameOf(r) || (current.key + '.out');
+      }
     }
 
     const secs = ((Date.now() - t0) / 1000).toFixed(1);
-    const url = URL.createObjectURL(blob);
     res.className = 'result on';
-    res.innerHTML =
-      `<div class="r-top"><span class="r-check">${svg(UI.check)}</span><div><b>Done in ${secs}s</b><small></small></div></div>`+
-      `<div class="r-actions"><a class="r-download" download>${svg(UI.download)}<span>Download file</span></a>`+
-      `<button type="button" class="r-again">Process another</button></div>`;
-    res.querySelector('small').textContent = `${name} · ${fmt(blob.size)}`;
-    const a = res.querySelector('a.r-download'); a.href = url; a.download = name;
-    a.setAttribute('aria-label', `Download ${name}, ${fmt(blob.size)}`);
-    res.querySelector('.r-again').onclick = () => resetTool();
-    a.focus({preventScroll:true});
-    addEventListener('pagehide', () => URL.revokeObjectURL(url), {once:true});
-    toast('Finished — ' + name, 'ok');
+
+    if(isDeliveryReceipt && receiptObj){
+      res.innerHTML =
+        `<div class="r-top"><span class="r-check">${svg(UI.check)}</span><div><b>Secure Emails Dispatched</b><small>Completed in ${secs}s</small></div></div>`+
+        `<div style="margin:14px 0; padding:14px; background:var(--color-paper); border:1px solid var(--color-rule); border-radius:8px; font-size:13px; display:flex; flex-direction:column; gap:6px;">`+
+        `<div><strong>Recipient:</strong> <code style="font-family:var(--font-mono);">${receiptObj.recipient}</code></div>`+
+        `<div><strong>Attached PDF:</strong> <code style="font-family:var(--font-mono);">${receiptObj.pdf_file}</code></div>`+
+        `<div style="display:flex; align-items:center; gap:8px; margin-top:4px;">`+
+        `<strong>Decryption Key:</strong> <code style="font-family:var(--font-mono); font-weight:700; background:var(--color-panel); padding:3px 8px; border-radius:5px; border:1px solid var(--color-rule);">${receiptObj.password}</code>`+
+        `<button type="button" class="sec-btn-icon" onclick="navigator.clipboard.writeText('${receiptObj.password}').then(()=>toast('Password copied','ok'))" title="Copy password">${svg(UI.copy)}</button>`+
+        `</div>`+
+        `</div>`+
+        `<div class="r-actions"><button type="button" class="r-again" onclick="resetTool()">Send another</button></div>`;
+      toast(`Delivered dual secure emails to ${receiptObj.recipient}`, 'ok');
+    } else {
+      const url = URL.createObjectURL(blob);
+      res.innerHTML =
+        `<div class="r-top"><span class="r-check">${svg(UI.check)}</span><div><b>Done in ${secs}s</b><small></small></div></div>`+
+        `<div class="r-actions"><a class="r-download" download>${svg(UI.download)}<span>Download file</span></a>`+
+        `<button type="button" class="r-again">Process another</button></div>`;
+      res.querySelector('small').textContent = `${name} · ${fmt(blob.size)}`;
+      const a = res.querySelector('a.r-download'); a.href = url; a.download = name;
+      a.setAttribute('aria-label', `Download ${name}, ${fmt(blob.size)}`);
+      res.querySelector('.r-again').onclick = () => resetTool();
+      a.focus({preventScroll:true});
+      addEventListener('pagehide', () => URL.revokeObjectURL(url), {once:true});
+      toast('Finished — ' + name, 'ok');
+    }
   }catch(e){
     toast(e.message, 'err');
   }finally{
@@ -1325,6 +2335,279 @@ function toast(msg, type='ok') {
   setTimeout(() => { t.remove(); }, 5000);
 }
 
+/* -------------------------------------------------------- Vault Controller --- */
+function updateVaultNavBadge(){
+  const badge = document.getElementById('vaultNavBadge');
+  if(!badge) return;
+  if(window.SquishVault && SquishVault.isConfigured()){
+    badge.hidden = false;
+    badge.className = SquishVault.isUnlocked() ? 'is-unlocked' : '';
+    badge.setAttribute('title', SquishVault.isUnlocked() ? `Vault Unlocked (${SquishVault.getProfilesCount()} profiles)` : 'Vault Locked');
+  } else {
+    badge.hidden = true;
+  }
+}
+
+function openVaultModal(){
+  const dlg = document.getElementById('vaultDialog');
+  if(!dlg) return;
+  dlg.hidden = false;
+  
+  const isUnlocked = window.SquishVault && SquishVault.isUnlocked();
+  const isConfigured = window.SquishVault && SquishVault.isConfigured();
+  
+  const pinView = document.getElementById('vaultPinView');
+  const manageView = document.getElementById('vaultManageView');
+  
+  if(isUnlocked){
+    pinView.hidden = true;
+    manageView.hidden = false;
+    renderVaultProfiles();
+  } else {
+    pinView.hidden = false;
+    manageView.hidden = true;
+    document.getElementById('vaultPinTitle').textContent = isConfigured ? 'Enter Master PIN' : 'Create Master PIN';
+    document.getElementById('vaultPinDesc').textContent = isConfigured
+      ? 'Your SMTP parameters are encrypted locally in your browser with AES-256-GCM. Enter your PIN to unlock.'
+      : 'Set a Master PIN to protect your SMTP credentials. They will be encrypted with AES-256-GCM in your browser.';
+    document.getElementById('vaultPinSubmitBtn').textContent = isConfigured ? 'Unlock Vault' : 'Create Vault & Set PIN';
+    document.getElementById('vaultPinInput').value = '';
+    setTimeout(() => document.getElementById('vaultPinInput').focus(), 50);
+  }
+  updateVaultNavBadge();
+}
+
+function closeVaultModal(){
+  const dlg = document.getElementById('vaultDialog');
+  if(dlg) dlg.hidden = true;
+  updateVaultNavBadge();
+  if(current && current.key === 'email-secure'){
+    buildFields();
+  }
+}
+
+async function handleVaultPinSubmit(e){
+  e.preventDefault();
+  const pin = document.getElementById('vaultPinInput').value.trim();
+  if(!pin || pin.length < 4){
+    toast('Master PIN must be at least 4 characters', 'err');
+    return;
+  }
+  
+  const isConfigured = SquishVault.isConfigured();
+  try{
+    if(isConfigured){
+      await SquishVault.unlockVault(pin);
+      toast('Vault unlocked successfully', 'ok');
+    } else {
+      await SquishVault.initVault(pin);
+      toast('Vault created and secured with PIN', 'ok');
+    }
+    document.getElementById('vaultPinView').hidden = true;
+    document.getElementById('vaultManageView').hidden = false;
+    renderVaultProfiles();
+    updateVaultNavBadge();
+    if(current && current.key === 'email-secure') buildFields();
+  }catch(err){
+    toast(err.message || 'Incorrect Master PIN', 'err');
+    document.getElementById('vaultPinInput').value = '';
+    document.getElementById('vaultPinInput').focus();
+  }
+}
+
+function renderVaultProfiles(){
+  const list = document.getElementById('vaultProfilesList');
+  const countEl = document.getElementById('vaultProfileCount');
+  const addBox = document.getElementById('vaultAddBox');
+  if(!list || !SquishVault.isUnlocked()) return;
+  
+  const profiles = SquishVault.getMaskedProfiles();
+  countEl.textContent = `${profiles.length} / 5`;
+  list.innerHTML = '';
+  
+  if(profiles.length >= 5){
+    addBox.style.opacity = '0.6';
+    addBox.style.pointerEvents = 'none';
+    document.getElementById('vaultAddTitle').textContent = 'Maximum limit of 5 profiles reached';
+  } else {
+    addBox.style.opacity = '1';
+    addBox.style.pointerEvents = 'auto';
+    document.getElementById('vaultAddTitle').textContent = 'Add New SMTP Profile';
+  }
+  
+  if(profiles.length === 0){
+    list.innerHTML = '<div style="padding:16px; text-align:center; color:var(--color-ink-muted); font-size:13px; background:var(--color-paper); border:1px solid var(--color-rule); border-radius:8px;">No SMTP profiles saved yet. Add your first profile below.</div>';
+    return;
+  }
+  
+  profiles.forEach(p => {
+    const card = document.createElement('div'); card.className = 'vault-profile-card';
+    card.innerHTML = `
+      <div class="vpc-head">
+        <span class="vpc-title">
+          <span>${p.name}</span>
+          <span class="badge">${p.security.toUpperCase()}</span>
+        </span>
+        <div style="display:flex; gap:6px;">
+          <button type="button" class="vpc-btn" onclick="testSavedProfile('${p.id}')">Test</button>
+          <button type="button" class="vpc-btn danger" onclick="deleteSavedProfile('${p.id}')">${svg(UI.trash)}</button>
+        </div>
+      </div>
+      <div class="vpc-grid">
+        <div class="vpc-item"><span>Server & Port</span><b>${p.server}:${p.port}</b></div>
+        <div class="vpc-item"><span>Sender Email</span><b>${p.username}</b></div>
+        <div class="vpc-item"><span>Password</span><b>••••••••</b></div>
+        <div class="vpc-item">
+          <span>Display Name (Editable)</span>
+          <input type="text" value="${p.from_name || ''}" placeholder="None" style="padding:2px 6px; font-size:12px; border:1px solid var(--color-rule); border-radius:4px; background:var(--color-panel);" onchange="updateSavedProfileMeta('${p.id}', this.value)">
+        </div>
+      </div>
+      <div id="testStatus_${p.id}" style="font-size:11.5px; font-family:var(--font-mono); margin-top:2px;" hidden></div>
+    `;
+    list.append(card);
+  });
+}
+
+async function testSavedProfile(profileId){
+  const statEl = document.getElementById('testStatus_' + profileId);
+  if(statEl){
+    statEl.hidden = false;
+    statEl.style.color = 'var(--color-accent-solid)';
+    statEl.textContent = 'Testing connection…';
+  }
+  try{
+    const raw = SquishVault.getProfileForDispatch(profileId);
+    const r = await fetch('/api/smtp/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ smtp: raw })
+    });
+    const res = await r.json();
+    if(statEl){
+      if(r.ok && res.ok){
+        statEl.style.color = 'var(--color-ok-solid)';
+        statEl.textContent = '✓ Connected successfully';
+        toast('SMTP connection verified!', 'ok');
+      } else {
+        statEl.style.color = 'var(--color-err)';
+        statEl.textContent = '✗ ' + (res.error || 'Connection failed');
+        toast('SMTP connection failed: ' + (res.error || 'Unknown error'), 'err');
+      }
+    }
+  }catch(err){
+    if(statEl){
+      statEl.style.color = 'var(--color-err)';
+      statEl.textContent = '✗ ' + err.message;
+    }
+    toast('Test error: ' + err.message, 'err');
+  }
+}
+
+async function handleTestNewProfile(){
+  const s = document.getElementById('vaf_server').value.trim();
+  const po = document.getElementById('vaf_port').value.trim();
+  const u = document.getElementById('vaf_username').value.trim();
+  const pw = document.getElementById('vaf_password').value;
+  const sec = document.getElementById('vaf_security').value;
+  
+  if(!s || !u || !pw){
+    toast('Please fill Server, Username, and Password to test', 'err');
+    return;
+  }
+  
+  const statEl = document.getElementById('vafTestStatus');
+  statEl.hidden = false;
+  statEl.style.color = 'var(--color-accent-solid)';
+  statEl.textContent = 'Testing connection…';
+  
+  try{
+    const r = await fetch('/api/smtp/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        smtp: { server: s, port: parseInt(po, 10)||587, username: u, password: pw, security: sec }
+      })
+    });
+    const res = await r.json();
+    if(r.ok && res.ok){
+      statEl.style.color = 'var(--color-ok-solid)';
+      statEl.textContent = '✓ ' + res.message;
+      toast('Connection test successful!', 'ok');
+    } else {
+      statEl.style.color = 'var(--color-err)';
+      statEl.textContent = '✗ ' + (res.error || 'Connection failed');
+      toast('Connection failed: ' + (res.error || 'Check credentials'), 'err');
+    }
+  }catch(err){
+    statEl.style.color = 'var(--color-err)';
+    statEl.textContent = '✗ ' + err.message;
+  }
+}
+
+async function handleAddProfile(e){
+  e.preventDefault();
+  const data = {
+    name: document.getElementById('vaf_name').value.trim(),
+    server: document.getElementById('vaf_server').value.trim(),
+    port: parseInt(document.getElementById('vaf_port').value, 10) || 587,
+    username: document.getElementById('vaf_username').value.trim(),
+    password: document.getElementById('vaf_password').value,
+    from_name: document.getElementById('vaf_from_name').value.trim(),
+    security: document.getElementById('vaf_security').value
+  };
+  
+  try{
+    await SquishVault.addProfile(data);
+    toast(`Saved profile “${data.name}”`, 'ok');
+    document.getElementById('vaultAddForm').reset();
+    document.getElementById('vafTestStatus').hidden = true;
+    renderVaultProfiles();
+    updateVaultNavBadge();
+    if(current && current.key === 'email-secure') buildFields();
+  }catch(err){
+    toast(err.message, 'err');
+  }
+}
+
+async function updateSavedProfileMeta(profileId, newFromName){
+  try{
+    await SquishVault.updateProfileMeta(profileId, { from_name: newFromName });
+    toast('Display name updated', 'ok');
+  }catch(err){
+    toast(err.message, 'err');
+  }
+}
+
+async function deleteSavedProfile(profileId){
+  if(!confirm('Delete this SMTP profile from your encrypted vault?')) return;
+  try{
+    await SquishVault.deleteProfile(profileId);
+    toast('Profile deleted', 'ok');
+    renderVaultProfiles();
+    updateVaultNavBadge();
+    if(current && current.key === 'email-secure') buildFields();
+  }catch(err){
+    toast(err.message, 'err');
+  }
+}
+
+function handleLockVault(){
+  SquishVault.lockVault();
+  toast('Vault locked', 'ok');
+  openVaultModal();
+  updateVaultNavBadge();
+  if(current && current.key === 'email-secure') buildFields();
+}
+
+function handleWipeVault(){
+  if(!confirm('WARNING: Permanently wipe all stored credentials from this browser?\n\nThis action cannot be undone.')) return;
+  SquishVault.wipeAll();
+  toast('All credentials wiped completely', 'ok');
+  openVaultModal();
+  updateVaultNavBadge();
+  if(current && current.key === 'email-secure') buildFields();
+}
+
 /* --------------------------------------------------- static UI icons --- */
 function paintStaticIcons(){
   document.querySelector('.search-btn .icon').outerHTML = svg(UI.search);
@@ -1343,9 +2626,12 @@ async function boot(){
     if(!r.ok) throw new Error('HTTP ' + r.status);
     const d = await r.json();
     TOOLS = d.tools; LIMITS = d.limits;
+    window.RAW_TOOLS_ORDER = TOOLS.map(t => t.key);
     document.getElementById('ver').textContent = 'v' + d.version;
     const badge = document.getElementById('offlineBadge'); badge.classList.add('is-live');
     document.getElementById('footerMode').textContent = 'GET /api/tools';
+    updateVaultNavBadge();
+    applySavedToolOrder();
     render(); buildPopular(); updateCounts();
   }catch(e){
     console.log("Backend not available, falling back to static mode", e);
@@ -1368,10 +2654,12 @@ async function boot(){
 
 window.onStaticToolsReady = function(staticTools) {
   TOOLS = staticTools;
+  window.RAW_TOOLS_ORDER = TOOLS.map(t => t.key);
   LIMITS = { max_upload_mb: 50 };
   if (window.STATIC_VERSION) {
     document.getElementById('ver').textContent = 'v' + window.STATIC_VERSION + ' · browser';
   }
+  applySavedToolOrder();
   render(); buildPopular(); updateCounts();
 };
 
