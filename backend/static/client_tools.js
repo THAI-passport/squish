@@ -2291,7 +2291,7 @@ shutil.rmtree('/tmp/squish_work', ignore_errors=True)
   }
 };
 
-function staticRandomSecret(bytes = 24) {
+function staticRandomSecret(bytes = 16) {
   const raw = new Uint8Array(bytes);
   crypto.getRandomValues(raw);
   return Array.from(raw, b => b.toString(16).padStart(2, '0')).join('');
