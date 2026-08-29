@@ -164,7 +164,7 @@ class SmtpClient {
     }
   }
 
-  async sendMail({to, subject, text, html, attachment}) {
+  async sendMail({to, subject, text, html, attachment, inReplyTo, references, messageId}) {
     const recipient = validateEmail(to, 'Recipient');
     const sender = this.config.username;
     this.expect(await this.command(`MAIL FROM:<${sender}>`), 250, 'MAIL FROM');
@@ -174,16 +174,22 @@ class SmtpClient {
     const mixed = `squish-mixed-${crypto.randomUUID()}`;
     const alt = `squish-alt-${crypto.randomUUID()}`;
     const display = this.config.from_name ? `${encodedHeader(this.config.from_name)} <${sender}>` : sender;
+    const msgId = messageId || `<${crypto.randomUUID()}@squish.app>`;
     const lines = [
       `From: ${display}`, `To: <${recipient}>`, `Subject: ${encodedHeader(subject)}`,
-      `Date: ${new Date().toUTCString()}`, `Message-ID: <${crypto.randomUUID()}@squish.app>`,
-      'MIME-Version: 1.0', `Content-Type: multipart/mixed; boundary="${mixed}"`, '',
+      `Date: ${new Date().toUTCString()}`, `Message-ID: ${msgId}`,
+      'MIME-Version: 1.0'
+    ];
+    if (inReplyTo) lines.push(`In-Reply-To: ${inReplyTo}`);
+    if (references) lines.push(`References: ${references}`);
+    lines.push(
+      `Content-Type: multipart/mixed; boundary="${mixed}"`, '',
       `--${mixed}`, `Content-Type: multipart/alternative; boundary="${alt}"`, '',
       `--${alt}`, 'Content-Type: text/plain; charset="utf-8"', 'Content-Transfer-Encoding: base64', '',
       wrapBase64(utf8Base64(text)), '',
       `--${alt}`, 'Content-Type: text/html; charset="utf-8"', 'Content-Transfer-Encoding: base64', '',
       wrapBase64(utf8Base64(html)), '', `--${alt}--`, ''
-    ];
+    );
     if (attachment) {
       const filename = cleanFilename(attachment.filename);
       lines.push(
@@ -196,6 +202,7 @@ class SmtpClient {
     const message = lines.join('\r\n').replace(/(^|\r\n)\./g, '$1..') + '\r\n.\r\n';
     await this.writer.write(this.encoder.encode(message));
     this.expect(await this.readResponse(), 250, 'Message delivery');
+    return msgId;
   }
 
   async close() {
@@ -240,21 +247,38 @@ async function dispatch(payload) {
   let firstSent = false;
   try {
     await client.open();
+    const email1MessageId = `<${crypto.randomUUID()}@squish.app>`;
     const email1Html = payload.htmlBody || `<h2>Secure document attached</h2><p>The encrypted document <strong>${htmlEscape(pdfFile)}</strong> is attached. Its password will arrive in a separate email.</p>`;
     await client.sendMail({
       to: recipient,
       subject: `[Secure Document] ${subject}`,
       text: `The encrypted document ${pdfFile} is attached. Its password will arrive in a separate email.`,
       html: email1Html,
-      attachment: {filename: pdfFile, base64: pdfBase64}
+      attachment: {filename: pdfFile, base64: pdfBase64},
+      messageId: email1MessageId
     });
     firstSent = true;
     const delayMs = Math.min(10000, Math.max(500, Number(payload.delaySeconds || 2.5) * 1000));
     await new Promise(resolve => setTimeout(resolve, delayMs));
     const second = passwordMessage(password, pdfFile, payload.email2Body);
-    const secondSubject = (cleanHeader(payload.email2Subject) || `[Decryption Key] Password for: ${subject}`)
-      .replace(/\{\{(?:doc_name|filename)\}\}/g, pdfFile);
-    await client.sendMail({to: recipient, subject: secondSubject, text: second.text, html: second.html});
+    
+    const threadEmails = Boolean(payload.threadEmails || payload.thread_emails);
+    let secondSubject;
+    if (threadEmails) {
+      secondSubject = cleanHeader(payload.email2Subject) || `Re: [Secure Document] ${subject}`;
+    } else {
+      secondSubject = (cleanHeader(payload.email2Subject) || `[Decryption Key] Password for: ${subject}`)
+        .replace(/\{\{(?:doc_name|filename)\}\}/g, pdfFile);
+    }
+
+    await client.sendMail({
+      to: recipient,
+      subject: secondSubject,
+      text: second.text,
+      html: second.html,
+      inReplyTo: threadEmails ? email1MessageId : undefined,
+      references: threadEmails ? email1MessageId : undefined
+    });
     return {status: 'success', recipient, pdf_file: pdfFile, password, timestamp: new Date().toISOString()};
   } catch (error) {
     if (!firstSent) throw error;

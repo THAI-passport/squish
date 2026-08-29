@@ -2555,6 +2555,29 @@ captain777@gmail.com,Steve Rogers,Shield maintenance schedule`;
           <option value="30">30 seconds</option>
         </select>
       </div>
+      <div class="field" style="margin-top:2px; padding:10px 12px; background:var(--color-paper); border:1px solid var(--color-rule); border-radius:6px;">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:500; margin:0; user-select:none;">
+            <input type="checkbox" id="f_thread_emails" style="margin:0; width:16px; height:16px; cursor:pointer;">
+            <span>Thread with Email #1 (Deliver password as reply in same chain)</span>
+          </label>
+          <button type="button" class="btn-sm" id="secThreadInfoBtn" style="background:none; border:none; padding:2px 6px; cursor:pointer; color:var(--color-accent-solid); display:inline-flex; align-items:center; gap:4px; font-size:12px;" title="Click to view security details">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px; height:15px;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            <span style="text-decoration:underline;">Why separate?</span>
+          </button>
+        </div>
+        <div id="secThreadExplainer" style="display:none; margin-top:8px; padding-top:8px; border-top:1px dashed var(--color-rule); font-size:12px; line-height:1.5; color:var(--color-ink);">
+          <p style="margin:0 0 6px;">
+            <b>What Threading does:</b> Delivers Email #2 as an <code>In-Reply-To</code> message so Gmail, Outlook, and Apple Mail bundle both emails into a single conversation thread. The recipient only needs to scroll down to view the password.
+          </p>
+          <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:6px; padding:8px 10px; color:#b91c1c;">
+            <strong style="display:flex; align-items:center; gap:4px; color:#991b1b; margin-bottom:2px;">
+              ⚠️ Security &amp; Compliance Caution:
+            </strong>
+            If the recipient clicks <b>"Forward"</b> or <b>"Reply All"</b> on a threaded conversation, their email client will bundle the entire email chain — transmitting <b>both the encrypted PDF and the decryption password in a single email</b> to unauthorized third parties. Keep this <b>unchecked (separate threads)</b> if strict credential isolation is required.
+          </div>
+        </div>
+      </div>
     </div>
   `;
   box.append(e2Field);
@@ -2566,6 +2589,17 @@ captain777@gmail.com,Steve Rogers,Shield maintenance schedule`;
     e2Wrap.style.display = isHidden ? 'flex' : 'none';
     toggleE2Btn.textContent = isHidden ? 'Hide Email #2 Options' : 'Customize Email #2';
   };
+
+  const threadInfoBtn = e2Field.querySelector('#secThreadInfoBtn');
+  const threadExplainer = e2Field.querySelector('#secThreadExplainer');
+  if(threadInfoBtn && threadExplainer){
+    threadInfoBtn.onclick = (e) => {
+      e.stopPropagation();
+      const isHidden = threadExplainer.style.display === 'none';
+      threadExplainer.style.display = isHidden ? 'block' : 'none';
+      threadInfoBtn.querySelector('span').textContent = isHidden ? 'Hide details' : 'Why separate?';
+    };
+  }
 
   // 9. Two-Step Delivery Timeline Card
   const timeline = document.createElement('div'); timeline.className = 'sec-timeline';
@@ -2746,7 +2780,7 @@ const fmt = b => b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(0) + ' K
 /* ------------------------------------------------------------ submit --- */
 let busy = false, elapsedTimer = null, lastEmailSmtpConfig = null;
 
-async function runBulkEmailDispatch({ files, fdBase, recipients, rawSubject, rawHtml, rawE2Subject, rawE2Body, delaySeconds, pwMode, customPassword, customFind, customReplaceWith, t0 }){
+async function runBulkEmailDispatch({ files, fdBase, recipients, rawSubject, rawHtml, rawE2Subject, rawE2Body, delaySeconds, pwMode, customPassword, customFind, customReplaceWith, threadEmails, t0 }){
   const res = document.getElementById('result');
   const prog = document.getElementById('progress');
   const pdf = files.find(f => /\.pdf$/i.test(f.name));
@@ -2825,6 +2859,7 @@ async function runBulkEmailDispatch({ files, fdBase, recipients, rawSubject, raw
     fd.set('email2_body', recipientE2Body);
     fd.set('custom_password', recipientPw);
     fd.set('delay_seconds', String(delaySeconds || 2.5));
+    fd.set('thread_emails', threadEmails ? '1' : '0');
 
     try{
       let receiptObj = null;
@@ -2970,6 +3005,7 @@ async function submit(){
           customPassword: document.getElementById('f_custom_password')?.value || '',
           customFind: document.getElementById('f_bulk_custom_find')?.value || '',
           customReplaceWith: document.getElementById('f_bulk_custom_replace')?.value || 'name',
+          threadEmails: document.getElementById('f_thread_emails')?.checked || false,
           t0
         });
       }catch(e){
@@ -2995,6 +3031,9 @@ async function submit(){
 
     const ds = document.getElementById('f_delay_seconds');
     if(ds && ds.value) fd.append('delay_seconds', ds.value);
+
+    const threadChk = document.getElementById('f_thread_emails');
+    fd.append('thread_emails', (threadChk && threadChk.checked) ? '1' : '0');
 
     const pwMode = document.getElementById('f_password_mode')?.value || 'random';
     fd.append('password_mode', pwMode);

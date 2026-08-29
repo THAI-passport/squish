@@ -14,7 +14,7 @@ import time
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import formatdate, parseaddr
+from email.utils import formatdate, make_msgid, parseaddr
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -124,12 +124,23 @@ def _build_email2(
     subject: Optional[str],
     email2_subject: Optional[str],
     email2_body: Optional[str],
+    in_reply_to: Optional[str] = None,
 ) -> MIMEMultipart:
     msg2 = MIMEMultipart("alternative")
     msg2["From"] = from_header
     msg2["To"] = recipient
 
-    e2_subj_template = email2_subject or f"[Decryption Key] Password for: {subject or pdf_filename}"
+    if in_reply_to:
+        msg2["In-Reply-To"] = in_reply_to
+        msg2["References"] = in_reply_to
+        if not email2_subject:
+            base_subj = subject or pdf_filename
+            e2_subj_template = f"Re: [Secure Document] {base_subj}" if not base_subj.lower().startswith("re:") else base_subj
+        else:
+            e2_subj_template = email2_subject
+    else:
+        e2_subj_template = email2_subject or f"[Decryption Key] Password for: {subject or pdf_filename}"
+
     e2_subj = sanitize_header_value(
         e2_subj_template.replace("{{doc_name}}", pdf_filename).replace("{{filename}}", pdf_filename)
     )
@@ -213,7 +224,8 @@ def send_dual_secure_email(
     html_body: Optional[str] = None,
     email2_subject: Optional[str] = None,
     email2_body: Optional[str] = None,
-    delay_seconds: float = 2.5
+    delay_seconds: float = 2.5,
+    thread_emails: bool = False,
 ) -> Dict[str, Any]:
     """Sends Email #1 with protected PDF, then waits and sends Email #2 with password.
 
@@ -248,6 +260,8 @@ def send_dual_secure_email(
             f"[Secure Document] {subject}" if subject else f"[Secure Document] Attached: {pdf_filename}"
         )
         msg1["Date"] = formatdate(localtime=True)
+        msg1_id = make_msgid(domain=sender.split("@")[-1] if "@" in sender else None)
+        msg1["Message-ID"] = msg1_id
 
         alt1 = MIMEMultipart("alternative")
         plain_text1 = (
@@ -297,7 +311,10 @@ def send_dual_secure_email(
         time.sleep(max(0.5, float(delay_seconds)))
 
         # ------------------------------------------------------------- EMAIL 2 ---
-        msg2 = _build_email2(from_header, recipient, pdf_filename, password, subject, email2_subject, email2_body)
+        msg2 = _build_email2(
+            from_header, recipient, pdf_filename, password, subject, email2_subject, email2_body,
+            in_reply_to=msg1_id if thread_emails else None
+        )
         server.sendmail(sender, [recipient], msg2.as_string())
 
         return {

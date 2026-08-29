@@ -349,3 +349,47 @@ def test_send_key_notification_resends_password_only(mock_smtp):
     )
     assert res["ok"] is True
     assert mock_inst.sendmail.call_count == 1
+
+
+@patch("smtplib.SMTP")
+def test_send_dual_secure_email_threading(mock_smtp, tmp_path):
+    mock_inst = MagicMock()
+    mock_smtp.return_value = mock_inst
+    mock_inst.ehlo.return_value = (250, b"ok")
+
+    pdf_path = tmp_path / "doc.pdf"
+    doc = fitz.open()
+    doc.new_page()
+    doc.save(pdf_path)
+    doc.close()
+
+    res = smtp_manager.send_dual_secure_email(
+        smtp={
+            "server": "smtp.example.com",
+            "port": 587,
+            "username": "sender@example.com",
+            "password": "secretpassword",
+            "from_name": "Finance Team"
+        },
+        recipient="client@example.com",
+        pdf_path=pdf_path,
+        password="MySecretKey123!",
+        subject="Invoice #1024",
+        thread_emails=True,
+        delay_seconds=0.05
+    )
+
+    assert res["ok"] is True
+    assert mock_inst.sendmail.call_count == 2
+    
+    # Check the second email's raw MIME headers for In-Reply-To and References
+    call_args_list = mock_inst.sendmail.call_args_list
+    email1_raw = call_args_list[0][0][2]
+    email2_raw = call_args_list[1][0][2]
+
+    # Email 1 must have Message-ID
+    assert "Message-ID:" in email1_raw
+    # Email 2 must have In-Reply-To and References pointing to Email 1
+    assert "In-Reply-To:" in email2_raw
+    assert "References:" in email2_raw
+    assert "Subject: Re: [Secure Document] Invoice #1024" in email2_raw

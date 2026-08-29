@@ -363,7 +363,8 @@ window.runStaticSecureEmail = async function(files, formData) {{
     password,
     delaySeconds: Number(formData.get('delay_seconds') || 2.5),
     email2Subject: String(formData.get('email2_subject') || ''),
-    email2Body: String(formData.get('email2_body') || '')
+    email2Body: String(formData.get('email2_body') || ''),
+    threadEmails: formData.get('thread_emails') === '1' || formData.get('thread_emails') === 'true'
   }};
 
   const response = await fetch('/api/t/email-secure', {{

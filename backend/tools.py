@@ -1220,6 +1220,7 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
     email2_subj = str(p.get("email2_subject") or "").strip() or None
     email2_body_tmpl = str(p.get("email2_body") or "").strip() or None
     delay_sec = float(p.get("delay_seconds") or 2.5)
+    thread_emails = bool(p.get("thread_emails") in (True, "true", "1", 1))
 
     # send_dual_secure_email raises only when NOTHING was sent (e.g. it
     # couldn't even connect/authenticate). If Email #1 (the PDF) went out but
@@ -1238,7 +1239,8 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
             html_body=html_body,
             email2_subject=email2_subj,
             email2_body=email2_body_tmpl,
-            delay_seconds=delay_sec
+            delay_seconds=delay_sec,
+            thread_emails=thread_emails
         )
     except Exception as exc:
         raise ToolError(f"Email delivery failed -- nothing was sent: {exc}")
