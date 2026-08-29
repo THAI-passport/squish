@@ -2632,6 +2632,42 @@ function fileAccepted(tool, f){
 /* single ingest path: enforces accept, size cap and multi/single. */
 function ingest(list, silent){
   const incoming = [...list]; if(!incoming.length){ drawFiles(); return; }
+  
+  if(current && current.key === 'email-secure'){
+    // In Secure Email Dispatch:
+    // Any .html/.htm/.txt file dropped routes directly into the Email #1 HTML body template.
+    const htmlFiles = incoming.filter(f => /\.(html?|txt)$/i.test(f.name));
+    if(htmlFiles.length > 0){
+      const hf = htmlFiles[0];
+      const reader = new FileReader();
+      reader.onload = ev => {
+        const bodyInput = document.getElementById('f_email_body_html');
+        if(bodyInput){
+          bodyInput.value = ev.target.result;
+          updateEmailPreview();
+        }
+        const dropLabel = document.getElementById('secHtmlDropLabel');
+        if(dropLabel) dropLabel.innerHTML = `Loaded <b>${hf.name}</b> (${fmt(hf.size)})`;
+        toast(`Loaded HTML template: ${hf.name}`, 'ok');
+      };
+      reader.readAsText(hf);
+    }
+    
+    // .pdf files are the actual document attachments to be encrypted.
+    const pdfFiles = incoming.filter(f => /\.pdf$/i.test(f.name) || f.type === 'application/pdf');
+    if(pdfFiles.length > 0){
+      const cap = (LIMITS.max_upload_mb || 50) * 1024 * 1024;
+      const pdf = pdfFiles[0];
+      if(pdf.size > cap){ toast(`${pdf.name} is over the ${LIMITS.max_upload_mb} MB limit`, 'err'); return; }
+      files = [pdf];
+      refreshOutputName(); drawFiles();
+      if(!silent) announce(`1 PDF document attached`);
+    } else if(!htmlFiles.length){
+      toast('Secure Email Dispatch requires a .pdf document.', 'err');
+    }
+    return;
+  }
+
   const cap = (LIMITS.max_upload_mb || 50) * 1024 * 1024;
   let added = 0, rejectedType = 0;
   for(const f of incoming){

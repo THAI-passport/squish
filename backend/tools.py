@@ -2068,7 +2068,7 @@ TOOLS: list[Tool] = [
          ]),
     Tool("email-secure", "Secure Email Dispatch", "Security",
          "Send an AES-256 encrypted PDF in Email #1, and the decryption key in Email #2.",
-         email_secure, accept=".pdf,.html,.htm", multi=True, min_files=1, fields=[
+         email_secure, accept=".pdf", multi=False, min_files=1, fields=[
              F("recipient_email", "text", "Recipient email address", required=True,
                placeholder="recipient@example.com", help="Destination inbox for the secure document and password."),
              F("email_subject", "text", "Email subject",
