@@ -603,6 +603,31 @@ footer code { font-family:var(--font-mono); }
 .tool-item:hover .tool-grip {
   opacity: 0.7;
 }
+.tool-item .tool-pin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px; height: 22px;
+  border-radius: 5px;
+  color: var(--color-ink-muted);
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.12s ease, background 0.12s ease;
+  flex: 0 0 auto;
+}
+.tool-item .tool-pin .icon { width: 15px; height: 15px; }
+.tool-item:hover .tool-pin,
+.tool-item .tool-pin.is-pinned,
+.tool-item:focus-within .tool-pin {
+  opacity: 1;
+}
+.tool-item .tool-pin:hover {
+  color: var(--color-accent-solid);
+  background: var(--color-paper);
+}
+.tool-item .tool-pin.is-pinned {
+  color: var(--color-accent-solid);
+}
+.tool-item .tool-pin.is-pinned .icon { fill: currentColor; }
 
 .sidebar-subhead {
   display: flex;
@@ -898,6 +923,13 @@ footer code { font-family:var(--font-mono); }
         <p id="vaultPinDesc">Your SMTP parameters are encrypted locally in your browser with AES-256-GCM. Enter your PIN to unlock.</p>
         <form id="vaultPinForm" onsubmit="handleVaultPinSubmit(event)">
           <input type="password" id="vaultPinInput" class="vault-pin-input" placeholder="••••" maxlength="12" autocomplete="off" required>
+          <!-- Only shown when creating a NEW vault -- there is no "forgot PIN"
+               recovery (the whole point is the server never sees it), so a
+               typo here would silently lock the person out of their own
+               saved credentials. Re-entering it catches that before it's
+               encrypted. Hidden (and not required) when just unlocking. -->
+          <input type="password" id="vaultPinConfirmInput" class="vault-pin-input" placeholder="Confirm PIN" maxlength="12" autocomplete="off" hidden style="margin-top:10px;">
+          <p id="vaultPinMismatch" class="hint" style="color:var(--color-err); margin-top:6px;" hidden>PINs don't match.</p>
           <div style="margin-top:14px; display:flex; gap:8px; justify-content:center;">
             <button type="submit" class="btn--primary" id="vaultPinSubmitBtn">Unlock Vault</button>
           </div>
@@ -972,12 +1004,40 @@ footer code { font-family:var(--font-mono); }
       <div id="vaultServerPane" hidden style="display:flex; flex-direction:column; gap:16px;">
         <div class="vault-add-box">
           <h4 style="margin:0 0 4px;">Server API Key</h4>
-          <p class="hint" style="margin:0 0 8px;">Server-side profiles are stored in this server's <code>.env</code> file and require <code>API_KEY</code> to be set on the server. Enter that same key here so the browser can talk to it. Stored only in this browser's local storage.</p>
+          <p class="hint" style="margin:0 0 10px;">Server-side profiles live in this server's <code>.env</code> file, which only opens up once <code>API_KEY</code> is set as an environment variable <em>on the server itself</em> — this page has no way to set that for you, since it's not something a browser can reach into. Three steps: pick a key, put it in the server's environment and restart it, then save that same value here.</p>
+
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+            <span style="font-size:11px; font-weight:700; color:var(--color-accent-solid); background:var(--color-panel); border:1px solid var(--color-rule); border-radius:999px; padding:2px 8px;">Step 1</span>
+            <span style="font-size:12.5px; color:var(--color-ink-muted);">Get a key — generate one here, or reuse one you've already set.</span>
+          </div>
           <div class="vaf-field">
             <label for="vaultApiKeyInput">X-API-Key</label>
-            <input type="password" id="vaultApiKeyInput" placeholder="Server's API_KEY value" autocomplete="off">
+            <div style="display:flex; gap:6px;">
+              <input type="text" id="vaultApiKeyInput" placeholder="Click Generate, or paste an existing key" autocomplete="off" style="flex:1;">
+              <button type="button" class="vpc-btn" onclick="generateApiKeyIntoInput()" title="Generate a random key">Generate</button>
+              <button type="button" class="vpc-btn" onclick="copyApiKeyInput()" title="Copy">Copy</button>
+            </div>
           </div>
-          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+
+          <div id="vaultApiKeySetupHelp" hidden style="margin-top:10px; padding:10px 12px; background:var(--color-panel); border:1px solid var(--color-rule); border-radius:8px; font-size:12.5px; line-height:1.5;">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
+              <span style="font-size:11px; font-weight:700; color:var(--color-accent-solid); background:var(--color-paper); border:1px solid var(--color-rule); border-radius:999px; padding:2px 8px;">Step 2</span>
+              <b>Put this value in the server's environment, then restart it</b>
+            </div>
+            <p style="margin:4px 0;">Pick whichever matches how you run Squish:</p>
+            <ul style="margin:4px 0 8px 18px; padding:0;">
+              <li><code>docker-compose.yml</code>: uncomment the <code>API_KEY:</code> line under <code>environment</code> and paste the value in.</li>
+              <li>Running locally: <code>export API_KEY=&lt;that value&gt;</code> before starting the server (or add it to your <code>.env</code>).</li>
+            </ul>
+            <p style="margin:4px 0;">Then restart the server so it picks up the new value.</p>
+            <div style="display:flex; align-items:center; gap:8px; margin:10px 0 4px;">
+              <span style="font-size:11px; font-weight:700; color:var(--color-accent-solid); background:var(--color-paper); border:1px solid var(--color-rule); border-radius:999px; padding:2px 8px;">Step 3</span>
+              <b>Come back here and click Save Key</b>
+            </div>
+            <p style="margin:4px 0 0;">Until the server has actually been restarted with this value, Save Key will fail with 401/403 — that's expected, it just means step 2 isn't done yet.</p>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
             <button type="button" class="vpc-btn" onclick="clearApiKey()">Clear</button>
             <button type="button" class="btn--primary" onclick="saveApiKeyFromInput()">Save Key</button>
           </div>
@@ -1104,7 +1164,8 @@ const UI = {
   refresh:'<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/>',
   key:'<circle cx="7.5" cy="15.5" r="4.5"/><path d="m21 3-9.5 9.5M15.5 7.5l3 3M18.5 4.5l2 2"/>',
   lock:'<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
-  trash:'<path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>'
+  trash:'<path d="M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>',
+  pin:'<path d="M12 17v5"/><path d="M8.5 3h7l.6 4.2c.1.8.6 1.5 1.3 1.9l.9.5c.7.4 1.2 1.2 1.2 2v.4a1 1 0 0 1-1 1H7.5a1 1 0 0 1-1-1v-.4c0-.8.5-1.6 1.2-2l.9-.5c.7-.4 1.2-1.1 1.3-1.9L8.5 3Z"/>'
 };
 const PG = '<path d="M6.5 3.5h7.7L18 7.3v12.2a1 1 0 0 1-1 1H6.5a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1Z"/><path d="M14 3.5V7.5h4"/>';
 const ICONS = {
@@ -1421,7 +1482,29 @@ function updateCount(){
 /* ------------------------------------------------------- Tool Ordering & Drag --- */
 let toolDragKey = null;
 
+/* ------------------------------------------------------------- Pinned Tools --- */
+let pinnedTools = [];
+function loadPinnedTools(){
+  try{
+    const saved = JSON.parse(localStorage.getItem('squish_pinned_tools') || '[]');
+    pinnedTools = Array.isArray(saved) ? saved : [];
+  }catch{ pinnedTools = []; }
+}
+function savePinnedTools(){
+  try{ localStorage.setItem('squish_pinned_tools', JSON.stringify(pinnedTools)); }catch{}
+}
+function isPinned(key){ return pinnedTools.includes(key); }
+function togglePin(key){
+  if(isPinned(key)) pinnedTools = pinnedTools.filter(k => k !== key);
+  else pinnedTools.push(key);
+  savePinnedTools();
+  render();
+  const t = TOOLS.find(x => x.key === key);
+  announce(t ? `${isPinned(key) ? 'Pinned' : 'Unpinned'} ${t.name}` : '');
+}
+
 function applySavedToolOrder(){
+  loadPinnedTools();
   try{
     const saved = localStorage.getItem('squish_tools_order');
     if(saved){
@@ -1490,88 +1573,128 @@ function matchesFilter(t){
   return (t.name + ' ' + t.blurb + ' ' + t.group).toLowerCase().includes(toolFilter);
 }
 
+function makeToolButton(t, opts){
+  opts = opts || {};
+  const b = document.createElement('button');
+  b.className = 'tool-item' + (isPinned(t.key) ? ' is-pinned' : '');
+  if(current && current.key === t.key) b.classList.add('is-active');
+  b.id = (opts.idPrefix || 'tool-') + t.key;
+  b.setAttribute('role', 'button');
+  b.setAttribute('aria-label', `${t.name}: ${t.blurb}`);
+
+  if(!t.available){ b.setAttribute('aria-disabled', 'true'); b.classList.add('is-off'); }
+
+  const ic = document.createElement('span'); ic.className = 'tool-icon'; ic.innerHTML = toolIcon(t.key);
+  const txt = document.createElement('span'); txt.className = 'tool-text';
+  const nm = document.createElement('span'); nm.className = 'tool-name'; nm.textContent = t.name;
+  const blurb = document.createElement('span'); blurb.className = 'tool-blurb'; blurb.textContent = t.blurb;
+  txt.append(nm, blurb);
+  b.append(ic, txt);
+
+  if(!t.available){
+    const miss = document.createElement('span'); miss.className = 'tool-miss'; miss.textContent = `needs ${t.needs}`;
+    b.append(miss);
+    const why = document.createElement('span'); why.className = 'sr-only'; why.textContent = `Unavailable: this build has no ${t.needs} installed.`;
+    b.append(why);
+  }
+
+  // Pin / favorite toggle
+  const pinned = isPinned(t.key);
+  const pin = document.createElement('span');
+  pin.className = 'tool-pin' + (pinned ? ' is-pinned' : '');
+  pin.setAttribute('role', 'button');
+  pin.setAttribute('tabindex', '0');
+  pin.setAttribute('aria-label', pinned ? `Unpin ${t.name}` : `Pin ${t.name} to top`);
+  pin.title = pinned ? 'Unpin' : 'Pin to top';
+  pin.innerHTML = svg(UI.pin);
+  pin.addEventListener('click', ev => { ev.stopPropagation(); togglePin(t.key); });
+  pin.addEventListener('keydown', ev => {
+    if(ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); ev.stopPropagation(); togglePin(t.key); }
+  });
+  b.append(pin);
+
+  // Drag Grip handle
+  if(!opts.noDrag){
+    const grip = document.createElement('span');
+    grip.className = 'tool-grip';
+    grip.setAttribute('aria-hidden', 'true');
+    grip.innerHTML = svg(UI.grip);
+    b.append(grip);
+
+    // Drag & drop event listeners (reorders the underlying TOOLS order,
+    // same as before -- dragging within the Pinned section still works
+    // because it operates on t.key, independent of which box the button
+    // currently lives in).
+    b.draggable = !toolFilter;
+    b.addEventListener('dragstart', ev => {
+      toolDragKey = t.key;
+      b.classList.add('is-dragging');
+      ev.dataTransfer.effectAllowed = 'move';
+      ev.dataTransfer.setData('text/plain', t.key);
+    });
+    b.addEventListener('dragend', () => {
+      toolDragKey = null;
+      document.querySelectorAll('.tool-item').forEach(el => el.classList.remove('is-dragging', 'tool-drop-above', 'tool-drop-below'));
+    });
+    b.addEventListener('dragover', ev => {
+      ev.preventDefault();
+      if(toolDragKey === null || toolDragKey === t.key) return;
+      const rect = b.getBoundingClientRect();
+      const before = ev.clientY < rect.top + rect.height / 2;
+      b.classList.toggle('tool-drop-above', before);
+      b.classList.toggle('tool-drop-below', !before);
+    });
+    b.addEventListener('dragleave', () => {
+      b.classList.remove('tool-drop-above', 'tool-drop-below');
+    });
+    b.addEventListener('drop', ev => {
+      ev.preventDefault();
+      b.classList.remove('tool-drop-above', 'tool-drop-below');
+      if(toolDragKey === null || toolDragKey === t.key) return;
+      const rect = b.getBoundingClientRect();
+      const before = ev.clientY < rect.top + rect.height / 2;
+      moveTool(toolDragKey, t.key, before);
+      toolDragKey = null;
+    });
+  }
+
+  b.onclick = () => {
+    if(!t.available){ toast(`${t.name} needs ${t.needs}, which this build does not include.`, 'err'); return; }
+    open_(t.key);
+  };
+  return b;
+}
+
 function render(){
   const groups = [...new Set(TOOLS.map(t => t.group))];
   const box = document.getElementById('groups');
   box.innerHTML = '';
   let shown = 0;
 
+  // Pinned section -- always first, regardless of each tool's own group.
+  // Pinned tools keep their normal (non-"pinned-") id and are removed from
+  // their regular group below so they only appear once.
+  const pinnedItems = pinnedTools
+    .map(k => TOOLS.find(t => t.key === k))
+    .filter(t => t && matchesFilter(t));
+  if(pinnedItems.length){
+    const h = document.createElement('h3'); h.className = 'group-title'; h.textContent = 'Pinned';
+    box.append(h);
+    for(const t of pinnedItems){
+      shown++;
+      box.append(makeToolButton(t));
+    }
+  }
+
   for(const g of groups){
-    const items = TOOLS.filter(x => x.group === g && matchesFilter(x));
+    const items = TOOLS.filter(x => x.group === g && matchesFilter(x) && !isPinned(x.key));
     if(!items.length) continue;
     const h = document.createElement('h3'); h.className = 'group-title'; h.textContent = g;
     box.append(h);
 
     for(const t of items){
       shown++;
-      const b = document.createElement('button');
-      b.className = 'tool-item';
-      if(current && current.key === t.key) b.classList.add('is-active');
-      b.id = 'tool-' + t.key;
-      b.setAttribute('role', 'button');
-      b.setAttribute('aria-label', `${t.name}: ${t.blurb}`);
-
-      if(!t.available){ b.setAttribute('aria-disabled', 'true'); b.classList.add('is-off'); }
-
-      const ic = document.createElement('span'); ic.className = 'tool-icon'; ic.innerHTML = toolIcon(t.key);
-      const txt = document.createElement('span'); txt.className = 'tool-text';
-      const nm = document.createElement('span'); nm.className = 'tool-name'; nm.textContent = t.name;
-      const blurb = document.createElement('span'); blurb.className = 'tool-blurb'; blurb.textContent = t.blurb;
-      txt.append(nm, blurb);
-      b.append(ic, txt);
-
-      if(!t.available){
-        const miss = document.createElement('span'); miss.className = 'tool-miss'; miss.textContent = `needs ${t.needs}`;
-        b.append(miss);
-        const why = document.createElement('span'); why.className = 'sr-only'; why.textContent = `Unavailable: this build has no ${t.needs} installed.`;
-        b.append(why);
-      }
-
-      // Drag Grip handle
-      const grip = document.createElement('span');
-      grip.className = 'tool-grip';
-      grip.setAttribute('aria-hidden', 'true');
-      grip.innerHTML = svg(UI.grip);
-      b.append(grip);
-
-      // Drag & drop event listeners
-      b.draggable = !toolFilter;
-      b.addEventListener('dragstart', ev => {
-        toolDragKey = t.key;
-        b.classList.add('is-dragging');
-        ev.dataTransfer.effectAllowed = 'move';
-        ev.dataTransfer.setData('text/plain', t.key);
-      });
-      b.addEventListener('dragend', () => {
-        toolDragKey = null;
-        document.querySelectorAll('.tool-item').forEach(el => el.classList.remove('is-dragging', 'tool-drop-above', 'tool-drop-below'));
-      });
-      b.addEventListener('dragover', ev => {
-        ev.preventDefault();
-        if(toolDragKey === null || toolDragKey === t.key) return;
-        const rect = b.getBoundingClientRect();
-        const before = ev.clientY < rect.top + rect.height / 2;
-        b.classList.toggle('tool-drop-above', before);
-        b.classList.toggle('tool-drop-below', !before);
-      });
-      b.addEventListener('dragleave', () => {
-        b.classList.remove('tool-drop-above', 'tool-drop-below');
-      });
-      b.addEventListener('drop', ev => {
-        ev.preventDefault();
-        b.classList.remove('tool-drop-above', 'tool-drop-below');
-        if(toolDragKey === null || toolDragKey === t.key) return;
-        const rect = b.getBoundingClientRect();
-        const before = ev.clientY < rect.top + rect.height / 2;
-        moveTool(toolDragKey, t.key, before);
-        toolDragKey = null;
-      });
-
-      b.onclick = () => {
-        if(!t.available){ toast(`${t.name} needs ${t.needs}, which this build does not include.`, 'err'); return; }
-        open_(t.key);
-      };
-      box.append(b);
+      box.append(makeToolButton(t));
     }
   }
   if(!shown){
@@ -2555,6 +2678,11 @@ function openVaultModal(){
       : 'Set a Master PIN to protect your SMTP credentials. They will be encrypted with AES-256-GCM in your browser.';
     document.getElementById('vaultPinSubmitBtn').textContent = isConfigured ? 'Unlock Vault' : 'Create Vault & Set PIN';
     document.getElementById('vaultPinInput').value = '';
+    const confirmEl = document.getElementById('vaultPinConfirmInput');
+    confirmEl.hidden = isConfigured;
+    confirmEl.required = !isConfigured;
+    confirmEl.value = '';
+    document.getElementById('vaultPinMismatch').hidden = true;
     setTimeout(() => document.getElementById('vaultPinInput').focus(), 50);
   }
   updateVaultNavBadge();
@@ -2587,12 +2715,35 @@ function switchVaultTab(which){
 }
 
 /* --------------------------------------------- server (.env) profiles --- */
+function generateApiKeyIntoInput(){
+  // A random, URL-safe 32-character key -- this is only ever a SUGGESTION
+  // typed into the input; the actual authority is whatever gets set as the
+  // API_KEY environment variable on the server. Generating it here just
+  // saves having to invent a strong string by hand.
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  const key = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const el = document.getElementById('vaultApiKeyInput');
+  el.value = key;
+  document.getElementById('vaultApiKeySetupHelp').hidden = false;
+  const status = document.getElementById('vaultApiKeyStatus');
+  status.style.color = 'var(--color-ink-muted)';
+  status.textContent = 'Generated — this is only a suggested value until you actually set it as API_KEY on the server (step 2 below) and restart.';
+  toast('Key generated — see the steps below', 'ok');
+}
+
+async function copyApiKeyInput(){
+  const val = document.getElementById('vaultApiKeyInput').value;
+  if(!val){ toast('Nothing to copy yet', 'err'); return; }
+  try{ await navigator.clipboard.writeText(val); toast('Copied to clipboard', 'ok'); }
+  catch{ toast('Could not copy — select and copy manually', 'err'); }
+}
+
 function saveApiKeyFromInput(){
   const el = document.getElementById('vaultApiKeyInput');
   setApiKey(el.value.trim());
   const status = document.getElementById('vaultApiKeyStatus');
   status.style.color = 'var(--color-ok-solid)';
-  status.textContent = getApiKey() ? 'Saved — this key will be sent on every request from now on.' : 'Cleared.';
+  status.textContent = getApiKey() ? 'Saved locally — this key will be sent on every request from now on. Checking against the server…' : 'Cleared.';
   toast(getApiKey() ? 'API key saved' : 'API key cleared', 'ok');
   loadServerProfiles();
   if(current && current.key === 'email-secure') buildFields();
@@ -2601,6 +2752,7 @@ function saveApiKeyFromInput(){
 function clearApiKey(){
   setApiKey('');
   document.getElementById('vaultApiKeyInput').value = '';
+  document.getElementById('vaultApiKeySetupHelp').hidden = true;
   const status = document.getElementById('vaultApiKeyStatus');
   status.style.color = 'var(--color-ink-muted)';
   status.textContent = 'Cleared. Requests will no longer send X-API-Key.';
@@ -2626,6 +2778,7 @@ async function loadServerProfiles(){
       const j = await r.json().catch(() => ({}));
       status.style.color = 'var(--color-err)';
       status.textContent = '✗ ' + (j.detail || 'Unauthorized — check your API key');
+      document.getElementById('vaultApiKeySetupHelp').hidden = false;
       list.innerHTML = '';
       document.getElementById('serverProfileCount').textContent = '0 / 5';
       _lastServerProfiles = [];
@@ -2633,6 +2786,9 @@ async function loadServerProfiles(){
     }
     const j = await r.json();
     _lastServerProfiles = j.profiles || [];
+    document.getElementById('vaultApiKeySetupHelp').hidden = true;
+    status.style.color = 'var(--color-ok-solid)';
+    status.textContent = '✓ Server accepted this key.';
     renderServerProfiles();
   }catch(e){
     list.innerHTML = `<p class="hint" style="color:var(--color-err);">Could not reach server: ${e.message}</p>`;
@@ -2760,6 +2916,21 @@ async function handleVaultPinSubmit(e){
   }
   
   const isConfigured = SquishVault.isConfigured();
+  const mismatchEl = document.getElementById('vaultPinMismatch');
+  mismatchEl.hidden = true;
+
+  if(!isConfigured){
+    // Creating a new vault: there's no PIN recovery, so catch a typo here
+    // rather than have it silently lock the person out later.
+    const confirmPin = document.getElementById('vaultPinConfirmInput').value.trim();
+    if(pin !== confirmPin){
+      mismatchEl.hidden = false;
+      document.getElementById('vaultPinConfirmInput').value = '';
+      document.getElementById('vaultPinConfirmInput').focus();
+      return;
+    }
+  }
+
   try{
     if(isConfigured){
       await SquishVault.unlockVault(pin);
