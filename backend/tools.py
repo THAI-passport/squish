@@ -1051,12 +1051,26 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
     if not pdf_input:
         pdf_input = inputs[0]
 
+    # Owner and user password MUST differ. PDF permission enforcement (here:
+    # accessibility + print only, no edit/copy) works by having two separate
+    # passwords -- the *user* password only unlocks the restricted view, and
+    # the *owner* password unlocks full control. If they're the same string
+    # (as this used to default to when no owner password was supplied), most
+    # readers can't tell which one was entered and just grant owner-level
+    # access -- silently defeating the permission restriction for anyone who
+    # has the (emailed) user password. Generate an independent, random,
+    # never-transmitted owner password instead.
+    # PyMuPDF/qpdf reject owner/user passwords longer than 40 characters, so
+    # this needs to stay comfortably under that -- token_urlsafe(24) yields
+    # a 32-character string.
+    owner_pw = str(p.get("owner_password") or "").strip() or secrets.token_urlsafe(24)
+
     src = open_pdf(pdf_input, p.get("pdf_open_password", ""))
     perm = (fitz.PDF_PERM_ACCESSIBILITY | fitz.PDF_PERM_PRINT)
     base = stem(pdf_input)
     dest_pdf = work / f"{base}_protected.pdf"
     src.save(dest_pdf, encryption=fitz.PDF_ENCRYPT_AES_256,
-             owner_pw=str(p.get("owner_password") or pw),
+             owner_pw=owner_pw,
              user_pw=pw, permissions=perm, garbage=4, deflate=True)
     src.close()
 
@@ -1089,17 +1103,25 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
     if not smtp_config.get("server"):
         raise ToolError("SMTP server is not configured. Please supply SMTP settings or unlock your vault.")
 
-    recipient = str(p.get("recipient_email") or "").strip()
-    if not recipient or "@" not in recipient:
-        raise ToolError("A valid recipient email address is required.")
+    try:
+        recipient = smtp_manager.validate_recipient_email(p.get("recipient_email") or "")
+    except ValueError as exc:
+        raise ToolError(str(exc))
 
     subject = str(p.get("email_subject") or "").strip() or None
     email2_subj = str(p.get("email2_subject") or "").strip() or None
     email2_body_tmpl = str(p.get("email2_body") or "").strip() or None
     delay_sec = float(p.get("delay_seconds") or 2.5)
 
+    # send_dual_secure_email raises only when NOTHING was sent (e.g. it
+    # couldn't even connect/authenticate). If Email #1 (the PDF) went out but
+    # Email #2 (the password) then failed, it returns a dict with
+    # partial=True instead of raising -- see the docstring there. That
+    # distinction matters here: a bare `except -> ToolError` would report
+    # "failed" even though the recipient's inbox already has the encrypted
+    # PDF sitting in it with no password ever coming.
     try:
-        smtp_manager.send_dual_secure_email(
+        send_result = smtp_manager.send_dual_secure_email(
             smtp=smtp_config,
             recipient=recipient,
             pdf_path=dest_pdf,
@@ -1111,17 +1133,47 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
             delay_seconds=delay_sec
         )
     except Exception as exc:
-        raise ToolError(f"Email delivery failed: {exc}")
+        raise ToolError(f"Email delivery failed -- nothing was sent: {exc}")
 
     receipt_file = work / f"{base}_delivery_receipt.json"
-    receipt_data = {
-        "status": "success",
-        "recipient": recipient,
-        "pdf_file": f"{base}_protected.pdf",
-        "password": pw,
-        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "message": f"Successfully sent encrypted document and decryption key to {recipient}"
-    }
+    # The receipt deliberately does NOT carry the SMTP password (or any SMTP
+    # config) for a resend: the browser already holds whatever config it
+    # used for this request (vault profile or the manual fields), and
+    # /api/smtp/resend-key expects the caller to supply `smtp` again itself
+    # rather than have the server hand a credential back through a result
+    # file. Only the pieces needed to reconstruct Email #2's *content* --
+    # not its auth -- are included here.
+    if send_result.get("partial"):
+        receipt_data = {
+            "status": "partial_failure",
+            "recipient": recipient,
+            "pdf_file": f"{base}_protected.pdf",
+            "password": pw,
+            "step1_sent": True,
+            "step2_sent": False,
+            "error": send_result.get("error"),
+            "resend": {
+                "recipient": recipient,
+                "password": pw,
+                "pdf_filename": f"{base}_protected.pdf",
+                "subject": subject,
+                "email2_subject": email2_subj,
+                "email2_body": email2_body_tmpl,
+            },
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "message": send_result.get("message"),
+        }
+    else:
+        receipt_data = {
+            "status": "success",
+            "recipient": recipient,
+            "pdf_file": f"{base}_protected.pdf",
+            "password": pw,
+            "step1_sent": True,
+            "step2_sent": True,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "message": f"Successfully sent encrypted document and decryption key to {recipient}"
+        }
     receipt_file.write_text(json.dumps(receipt_data, indent=2), encoding="utf-8")
     return Result(receipt_file, "application/json", f"{base}_delivery_receipt.json")
 

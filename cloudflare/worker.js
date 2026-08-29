@@ -5,6 +5,26 @@
 
 import { connect } from 'cloudflare:sockets';
 
+// Email headers are newline-delimited; any \r or \n from a caller-supplied
+// field (subject, recipient, from name, filename, ...) reaching a raw
+// header string lets it splice in extra headers or corrupt the message.
+// Strip control characters before anything touches a header line.
+function sanitizeHeader(val) {
+  if (val === undefined || val === null) return '';
+  return String(val).replace(/[\r\n\x00]/g, '').trim();
+}
+
+function validateRecipient(addr) {
+  const cleaned = sanitizeHeader(addr);
+  if (!cleaned || cleaned.includes(',') || cleaned.includes(';')) {
+    throw new Error('Recipient must be a single, valid email address');
+  }
+  if (!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(cleaned)) {
+    throw new Error(`Invalid recipient email address: ${addr}`);
+  }
+  return cleaned;
+}
+
 export default {
   async fetch(request, env, ctx) {
     // CORS headers
@@ -165,8 +185,11 @@ class SmtpClient {
   }
 
   async sendMail({ from, to, subject, text, html, attachments }) {
-    const sender = this.username || from;
-    const fromHeader = this.fromName ? `"${this.fromName}" <${sender}>` : sender;
+    to = validateRecipient(to);
+    subject = sanitizeHeader(subject);
+    const sender = sanitizeHeader(this.username || from);
+    const fromNameClean = sanitizeHeader(this.fromName);
+    const fromHeader = fromNameClean ? `"${fromNameClean}" <${sender}>` : sender;
 
     const mFrom = await this.sendCommand(`MAIL FROM:<${sender}>`);
     if (!mFrom.startsWith('250')) throw new Error(`MAIL FROM failed: ${mFrom}`);
@@ -295,7 +318,7 @@ async function dispatchDualEmail(payload) {
       text: `You have received an encrypted PDF document: ${pdfFilename || 'document.pdf'}.\n\nThis file is password-protected. The decryption password will arrive in a separate email shortly.`,
       html: email1Html,
       attachments: [{
-        filename: pdfFilename || 'document_protected.pdf',
+        filename: sanitizeHeader(pdfFilename).replace(/["\\/]/g, '_') || 'document_protected.pdf',
         contentType: 'application/pdf',
         content: pdfBase64
       }]

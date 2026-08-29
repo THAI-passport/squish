@@ -223,11 +223,134 @@ async def smtp_test(request: Request):
 
     smtp_config = data.get("smtp") or data
     import smtp_manager
-    res = smtp_manager.test_smtp_connection(smtp_config)
+    # smtplib does blocking socket I/O with up to a 15s timeout inside
+    # test_smtp_connection. Calling it directly here would stall the whole
+    # asyncio event loop -- every other request on the server -- for up to
+    # that long whenever a host is slow or unreachable. Same reasoning as the
+    # asyncio.to_thread(tool.fn, ...) call in run_tool() below.
+    res = await asyncio.to_thread(smtp_manager.test_smtp_connection, smtp_config)
     if not res.get("ok"):
         return JSONResponse(res, status_code=400)
     return JSONResponse(res)
 
+
+@app.post("/api/smtp/resend-key")
+async def smtp_resend_key(request: Request):
+    """Resend Email #2 (the decryption password) on its own.
+
+    For when Email #1 (the PDF) already went out but the follow-up password
+    email failed -- see the `partial` branch of tools.email_secure. Reuses
+    the same password rather than generating (and emailing) a new one that
+    would no longer match the PDF already sitting in the recipient's inbox.
+    """
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(400, "invalid JSON payload")
+
+    smtp_config = data.get("smtp") or {}
+    recipient = data.get("recipient") or ""
+    password = data.get("password") or ""
+    pdf_filename = data.get("pdf_filename") or data.get("doc_name") or "document.pdf"
+    subject = data.get("subject")
+    email2_subject = data.get("email2_subject")
+    email2_body = data.get("email2_body")
+
+    if not smtp_config.get("server"):
+        raise HTTPException(400, "SMTP server is not configured")
+    if not recipient or not password:
+        raise HTTPException(400, "recipient and password are required")
+
+    import smtp_manager
+    try:
+        res = await asyncio.to_thread(
+            smtp_manager.send_key_notification,
+            smtp_config, recipient, password, pdf_filename,
+            subject, email2_subject, email2_body,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=502)
+    return JSONResponse(res)
+
+
+def _require_api_key(request: Request) -> None:
+    """The blanket `guard` middleware only enforces API_KEY when one is set.
+    These handlers persist SMTP credentials to disk, so they refuse to run
+    at all unless an API_KEY is configured -- an unauthenticated Squish
+    instance must not expose a remote write-secrets-to-disk endpoint."""
+    if not API_KEY:
+        raise HTTPException(
+            403,
+            "Server-side SMTP profile storage requires API_KEY to be set. "
+            "Set the API_KEY environment variable and restart, or use the "
+            "browser-side Vault instead."
+        )
+    given = request.headers.get("x-api-key") or request.query_params.get("key")
+    if given != API_KEY:
+        raise HTTPException(401, "invalid or missing API key")
+
+
+@app.get("/api/smtp/profiles")
+async def smtp_profiles_list(request: Request):
+    _require_api_key(request)
+    import env_manager
+    return JSONResponse({"profiles": env_manager.list_profiles_masked()})
+
+
+@app.post("/api/smtp/profiles")
+async def smtp_profiles_add(request: Request):
+    """Insert-only: create a new server-side profile. There is no endpoint
+    to read a password back out, and no endpoint to change one in place --
+    replacing a credential means deleting the profile and adding a new one."""
+    _require_api_key(request)
+    import env_manager
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(400, "invalid JSON payload")
+    try:
+        idx = env_manager.add_profile(data)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    return JSONResponse({"ok": True, "id": idx})
+
+
+@app.patch("/api/smtp/profiles/{idx}")
+async def smtp_profiles_update(idx: int, request: Request):
+    """Edit ONLY the nickname / MAIL_FROM_NAME -- never the password."""
+    _require_api_key(request)
+    import env_manager
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(400, "invalid JSON payload")
+    try:
+        env_manager.update_profile_meta(idx, name=data.get("name"), from_name=data.get("from_name"))
+    except KeyError as exc:
+        raise HTTPException(404, str(exc))
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/smtp/profiles/{idx}")
+async def smtp_profiles_delete(idx: int, request: Request):
+    _require_api_key(request)
+    import env_manager
+    try:
+        env_manager.delete_profile(idx)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc))
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/smtp/wipe")
+async def smtp_profiles_wipe(request: Request):
+    """Purge every server-side SMTP profile from the .env file."""
+    _require_api_key(request)
+    import env_manager
+    env_manager.wipe_all()
+    return JSONResponse({"ok": True})
 
 
 def discard(work: Path) -> None:

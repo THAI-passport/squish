@@ -2055,7 +2055,7 @@ function announce(msg){ document.getElementById('fileStatus').textContent = msg;
 const fmt = b => b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(0) + ' KB' : (b / 1048576).toFixed(1) + ' MB';
 
 /* ------------------------------------------------------------ submit --- */
-let busy = false, elapsedTimer = null;
+let busy = false, elapsedTimer = null, lastEmailSmtpConfig = null;
 async function submit(){
   const noInput = current.min_files > 0 ? !files.length : (!files.length && !(document.getElementById('f_md_text') || {}).value?.trim());
   if(busy || noInput) return;
@@ -2076,10 +2076,16 @@ async function submit(){
   if(current.key === 'email-secure'){
     const selEl = document.getElementById('f_smtp_profile_select');
     const profId = selEl ? selEl.value : '__manual__';
+    // Remembered so a later "Resend Decryption Key" (after a partial
+    // failure) can reconnect without asking the vault to be unlocked again
+    // or the manual fields to be re-typed. Cleared whenever the tool result
+    // resets, so a stale config can't be reused for an unrelated send.
+    lastEmailSmtpConfig = null;
     if(profId !== '__manual__' && window.SquishVault && SquishVault.isUnlocked()){
       try{
         const pObj = SquishVault.getProfileForDispatch(profId);
         fd.append('smtp_profile_json', JSON.stringify(pObj));
+        lastEmailSmtpConfig = pObj;
       }catch{}
     }else{
       const s = document.getElementById('f_mail_server'); if(s && s.value) fd.append('mail_server', s.value);
@@ -2088,8 +2094,13 @@ async function submit(){
       const pw = document.getElementById('f_mail_password'); if(pw && pw.value) fd.append('mail_password', pw.value);
       const fn = document.getElementById('f_mail_from_name'); if(fn && fn.value) fd.append('mail_from_name', fn.value);
       const sec = document.getElementById('f_mail_security'); if(sec && sec.value) fd.append('mail_security', sec.value);
+      lastEmailSmtpConfig = {
+        server: s?.value || '', port: parseInt(po?.value, 10) || 587,
+        username: u?.value || '', password: pw?.value || '',
+        from_name: fn?.value || '', security: sec?.value || 'starttls'
+      };
     }
-    
+
     const recip = document.getElementById('f_recipient_email'); if(recip && recip.value) fd.append('recipient_email', recip.value);
     const subj = document.getElementById('f_email_subject'); if(subj && subj.value) fd.append('email_subject', subj.value);
     
@@ -2152,7 +2163,23 @@ async function submit(){
     const secs = ((Date.now() - t0) / 1000).toFixed(1);
     res.className = 'result on';
 
-    if(isDeliveryReceipt && receiptObj){
+    if(isDeliveryReceipt && receiptObj && receiptObj.status === 'partial_failure'){
+      window._pendingResend = { ...receiptObj.resend, smtp: lastEmailSmtpConfig };
+      res.innerHTML =
+        `<div class="r-top"><span class="r-check" style="color:var(--color-err);">${svg(UI.warning || UI.check)}</span><div><b>Encrypted PDF delivered — password email failed</b><small>Completed in ${secs}s</small></div></div>`+
+        `<div style="margin:14px 0; padding:14px; background:var(--color-paper); border:1px solid var(--color-err); border-radius:8px; font-size:13px; display:flex; flex-direction:column; gap:6px;">`+
+        `<div><strong>Recipient:</strong> <code style="font-family:var(--font-mono);">${receiptObj.recipient}</code></div>`+
+        `<div><strong>Attached PDF:</strong> <code style="font-family:var(--font-mono);">${receiptObj.pdf_file}</code> — already delivered.</div>`+
+        `<div style="color:var(--color-err);"><strong>Password email did NOT send:</strong> ${receiptObj.error || 'unknown error'}</div>`+
+        `<div style="display:flex; align-items:center; gap:8px; margin-top:4px;">`+
+        `<strong>Decryption Key:</strong> <code style="font-family:var(--font-mono); font-weight:700; background:var(--color-panel); padding:3px 8px; border-radius:5px; border:1px solid var(--color-rule);">${receiptObj.password}</code>`+
+        `<button type="button" class="sec-btn-icon" onclick="navigator.clipboard.writeText('${receiptObj.password}').then(()=>toast('Password copied','ok'))" title="Copy password">${svg(UI.copy)}</button>`+
+        `</div>`+
+        `</div>`+
+        `<div class="r-actions"><button type="button" id="resendKeyBtn" onclick="resendDecryptionKey()">Resend Decryption Key</button>`+
+        `<button type="button" class="r-again" onclick="resetTool()">Dismiss</button></div>`;
+      toast(`PDF delivered to ${receiptObj.recipient}, but the password email failed`, 'err');
+    } else if(isDeliveryReceipt && receiptObj){
       res.innerHTML =
         `<div class="r-top"><span class="r-check">${svg(UI.check)}</span><div><b>Secure Emails Dispatched</b><small>Completed in ${secs}s</small></div></div>`+
         `<div style="margin:14px 0; padding:14px; background:var(--color-paper); border:1px solid var(--color-rule); border-radius:8px; font-size:13px; display:flex; flex-direction:column; gap:6px;">`+
@@ -2195,7 +2222,44 @@ function resetTool(){
   const res = document.getElementById('result'); res.className = 'result'; res.innerHTML = '';
   const on = document.getElementById('f_output_name'); if(on) on.dataset.touched = '';
   teardownPicker(); refreshOutputName(); drawFiles();
+  window._pendingResend = null;
   document.getElementById('drop').focus();
+}
+
+/* Resend just Email #2 (the decryption password) after a partial failure --
+   reuses the same password that already went out with the PDF, instead of
+   generating a new one that would no longer match. */
+async function resendDecryptionKey(){
+  const ctx = window._pendingResend;
+  if(!ctx || !ctx.smtp || !ctx.smtp.server){
+    toast('Nothing to resend — the SMTP details for this send are no longer available.', 'err');
+    return;
+  }
+  const btn = document.getElementById('resendKeyBtn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Resending…'; }
+  try{
+    const r = await fetch('/api/smtp/resend-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        smtp: ctx.smtp, recipient: ctx.recipient, password: ctx.password,
+        pdf_filename: ctx.pdf_filename, subject: ctx.subject,
+        email2_subject: ctx.email2_subject, email2_body: ctx.email2_body
+      })
+    });
+    const j = await r.json().catch(() => ({}));
+    if(r.ok && j.ok){
+      toast(`Decryption key resent to ${ctx.recipient}`, 'ok');
+      window._pendingResend = null;
+      if(btn){ btn.textContent = 'Resent ✓'; }
+    } else {
+      toast('Resend failed: ' + (j.error || j.detail || 'unknown error'), 'err');
+      if(btn){ btn.disabled = false; btn.textContent = 'Resend Decryption Key'; }
+    }
+  }catch(e){
+    toast('Resend failed: ' + e.message, 'err');
+    if(btn){ btn.disabled = false; btn.textContent = 'Resend Decryption Key'; }
+  }
 }
 
 function filenameOf(r){
