@@ -6,8 +6,16 @@
  * and key as separate messages, and stores nothing.
  */
 import { connect } from 'cloudflare:sockets';
+import {
+  AuthError,
+  authConfiguration,
+  handleAuthRoute,
+  readSession,
+  requireSession,
+} from './squish-auth.mjs';
 
 const MAX_ENCRYPTED_PDF_BYTES = 12 * 1024 * 1024;
+const MAX_ATTACHMENTS = 10;
 
 function cleanHeader(value) {
   return String(value ?? '').replace(/[\r\n\x00]/g, '').trim();
@@ -164,7 +172,7 @@ class SmtpClient {
     }
   }
 
-  async sendMail({to, subject, text, html, attachment, inReplyTo, references, messageId}) {
+  async sendMail({to, subject, text, html, attachment, attachments, inReplyTo, references, messageId}) {
     const recipient = validateEmail(to, 'Recipient');
     const sender = this.config.username;
     this.expect(await this.command(`MAIL FROM:<${sender}>`), 250, 'MAIL FROM');
@@ -182,20 +190,26 @@ class SmtpClient {
     ];
     if (inReplyTo) lines.push(`In-Reply-To: ${inReplyTo}`);
     if (references) lines.push(`References: ${references}`);
-    lines.push(
-      `Content-Type: multipart/mixed; boundary="${mixed}"`, '',
-      `--${mixed}`, `Content-Type: multipart/alternative; boundary="${alt}"`, '',
-      `--${alt}`, 'Content-Type: text/plain; charset="utf-8"', 'Content-Transfer-Encoding: base64', '',
-      wrapBase64(utf8Base64(text)), '',
-      `--${alt}`, 'Content-Type: text/html; charset="utf-8"', 'Content-Transfer-Encoding: base64', '',
-      wrapBase64(utf8Base64(html)), '', `--${alt}--`, ''
-    );
-    if (attachment) {
-      const filename = cleanFilename(attachment.filename);
+    lines.push(`Content-Type: multipart/mixed; boundary="${mixed}"`, '', `--${mixed}`);
+    if (html) {
+      lines.push(
+        `Content-Type: multipart/alternative; boundary="${alt}"`, '',
+        `--${alt}`, 'Content-Type: text/plain; charset="utf-8"', 'Content-Transfer-Encoding: base64', '',
+        wrapBase64(utf8Base64(text)), '',
+        `--${alt}`, 'Content-Type: text/html; charset="utf-8"', 'Content-Transfer-Encoding: base64', '',
+        wrapBase64(utf8Base64(html)), '', `--${alt}--`, ''
+      );
+    } else {
+      lines.push('Content-Type: text/plain; charset="utf-8"', 'Content-Transfer-Encoding: base64', '',
+        wrapBase64(utf8Base64(text)), '');
+    }
+    const allAttachments = attachments || (attachment ? [attachment] : []);
+    for (const item of allAttachments) {
+      const filename = cleanFilename(item.filename);
       lines.push(
         `--${mixed}`, `Content-Type: application/pdf; name="${filename}"`,
         `Content-Disposition: attachment; filename="${filename}"`,
-        'Content-Transfer-Encoding: base64', '', wrapBase64(attachment.base64), ''
+        'Content-Transfer-Encoding: base64', '', wrapBase64(item.base64), ''
       );
     }
     lines.push(`--${mixed}--`, '');
@@ -219,6 +233,23 @@ function validatePdfBase64(value) {
   return encoded;
 }
 
+function validateAttachments(payload) {
+  const raw = Array.isArray(payload.attachments) && payload.attachments.length
+    ? payload.attachments
+    : [{filename: payload.pdfFilename, base64: payload.pdfBase64}];
+  if (raw.length > MAX_ATTACHMENTS) throw new Error(`A maximum of ${MAX_ATTACHMENTS} PDF attachments is allowed`);
+  let total = 0;
+  const attachments = raw.map(item => {
+    const base64 = validatePdfBase64(item?.base64);
+    total += Math.floor(base64.length * 3 / 4);
+    return {filename: cleanFilename(item?.filename), base64};
+  });
+  if (total > MAX_ENCRYPTED_PDF_BYTES) {
+    throw new Error('Combined encrypted PDFs exceed the 12 MB Cloudflare email limit');
+  }
+  return attachments;
+}
+
 function passwordMessage(password, docName, template) {
   if (template) {
     const rendered = String(template)
@@ -240,51 +271,68 @@ async function dispatch(payload) {
   const recipient = validateEmail(payload.recipient, 'Recipient');
   const password = String(payload.password || '');
   if (password.length < 4) throw new Error('Decryption password must be at least 4 characters');
-  const pdfBase64 = validatePdfBase64(payload.pdfBase64);
-  const pdfFile = cleanFilename(payload.pdfFilename);
-  const subject = cleanHeader(payload.subject) || pdfFile;
+  const attachments = validateAttachments(payload);
+  const pdfFile = attachments[0].filename;
+  const attachmentLabel = attachments.length === 1 ? pdfFile : `${attachments.length} encrypted PDF files`;
+  const subject = cleanHeader(payload.subject) || attachmentLabel;
+  const keyDeliveryMode = cleanHeader(payload.keyDeliveryMode || payload.key_delivery_mode || 'email').toLowerCase();
+  if (!['email', 'oob', 'dual'].includes(keyDeliveryMode)) throw new Error('Invalid key delivery mode');
   const client = new SmtpClient(smtp);
   let firstSent = false;
   try {
     await client.open();
     const email1MessageId = `<${crypto.randomUUID()}@squish.app>`;
-    const email1Html = payload.htmlBody || `<h2>Secure document attached</h2><p>The encrypted document <strong>${htmlEscape(pdfFile)}</strong> is attached. Its password will arrive in a separate email.</p>`;
+    const deliveryText = keyDeliveryMode === 'oob'
+      ? 'Its password will be delivered through a separate channel.'
+      : 'Its password will arrive in a separate email.';
+    const plainTextOnly = payload.plainTextOnly === true || payload.plainTextOnly === '1' ||
+      payload.email_plain_text_only === true || payload.email_plain_text_only === '1';
+    const email1Text = plainTextOnly && payload.htmlBody
+      ? String(payload.htmlBody)
+      : `${attachmentLabel} attached. ${deliveryText}`;
+    const email1Html = plainTextOnly ? null : (payload.htmlBody || `<h2>Secure document attached</h2><p><strong>${htmlEscape(attachmentLabel)}</strong> attached. ${htmlEscape(deliveryText)}</p>`);
     await client.sendMail({
       to: recipient,
       subject: `[Secure Document] ${subject}`,
-      text: `The encrypted document ${pdfFile} is attached. Its password will arrive in a separate email.`,
+      text: email1Text,
       html: email1Html,
-      attachment: {filename: pdfFile, base64: pdfBase64},
+      attachments,
       messageId: email1MessageId
     });
     firstSent = true;
-    const delayMs = Math.min(10000, Math.max(500, Number(payload.delaySeconds || 2.5) * 1000));
-    await new Promise(resolve => setTimeout(resolve, delayMs));
-    const second = passwordMessage(password, pdfFile, payload.email2Body);
-    
-    const threadEmails = Boolean(payload.threadEmails || payload.thread_emails);
-    let secondSubject;
-    if (threadEmails) {
-      secondSubject = cleanHeader(payload.email2Subject) || `Re: [Secure Document] ${subject}`;
-    } else {
-      secondSubject = (cleanHeader(payload.email2Subject) || `[Decryption Key] Password for: ${subject}`)
-        .replace(/\{\{(?:doc_name|filename)\}\}/g, pdfFile);
+    if (keyDeliveryMode !== 'oob') {
+      const delayMs = Math.min(10000, Math.max(500, Number(payload.delaySeconds || 2.5) * 1000));
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+      const second = passwordMessage(password, attachmentLabel, payload.email2Body);
+      const threadEmails = Boolean(payload.threadEmails || payload.thread_emails);
+      let secondSubject;
+      if (threadEmails) {
+        secondSubject = cleanHeader(payload.email2Subject) || `Re: [Secure Document] ${subject}`;
+      } else {
+        secondSubject = (cleanHeader(payload.email2Subject) || `[Decryption Key] Password for: ${subject}`)
+          .replace(/\{\{(?:doc_name|filename)\}\}/g, attachmentLabel);
+      }
+      await client.sendMail({
+        to: recipient, subject: secondSubject, text: second.text, html: second.html,
+        inReplyTo: threadEmails ? email1MessageId : undefined,
+        references: threadEmails ? email1MessageId : undefined
+      });
     }
-
-    await client.sendMail({
-      to: recipient,
-      subject: secondSubject,
-      text: second.text,
-      html: second.html,
-      inReplyTo: threadEmails ? email1MessageId : undefined,
-      references: threadEmails ? email1MessageId : undefined
-    });
-    return {status: 'success', recipient, pdf_file: pdfFile, password, timestamp: new Date().toISOString()};
+    return {
+      status: 'success', recipient, pdf_file: pdfFile,
+      attachments: attachments.map(item => item.filename), password,
+      step1_sent: true, step2_sent: keyDeliveryMode !== 'oob',
+      key_delivery_mode: keyDeliveryMode,
+      oob_required: keyDeliveryMode === 'oob' || keyDeliveryMode === 'dual',
+      timestamp: new Date().toISOString()
+    };
   } catch (error) {
     if (!firstSent) throw error;
     return {
-      status: 'partial_failure', recipient, pdf_file: pdfFile, password,
+      status: 'partial_failure', recipient, pdf_file: pdfFile,
+      attachments: attachments.map(item => item.filename), password,
       step1_sent: true, step2_sent: false, error: error.message,
+      key_delivery_mode: keyDeliveryMode,
       resend: {
         recipient, password, pdf_filename: pdfFile, subject,
         email2_subject: cleanHeader(payload.email2Subject), email2_body: String(payload.email2Body || '')
@@ -316,17 +364,42 @@ async function resendKey(payload) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    try {
+      const authResponse = await handleAuthRoute(request, env, ctx);
+      if (authResponse) return authResponse;
+    } catch (error) {
+      if (error instanceof AuthError) {
+        return json({ok: false, code: error.code, error: error.message}, error.status);
+      }
+      console.error(JSON.stringify({
+        message: 'hosted_auth_route_failed',
+        path: url.pathname,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      return json({ok: false, code: 'auth_service_error', error: 'Hosted account service is temporarily unavailable'}, 500);
+    }
     try {
       if (url.pathname.startsWith('/api/')) assertSameOrigin(request);
       if (request.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
         return new Response(null, {status: 204, headers: {'Allow': 'GET, POST, OPTIONS'}});
       }
       if (url.pathname === '/api/cloudflare-capabilities' && request.method === 'GET') {
-        return json({secure_email: true, max_encrypted_pdf_mb: 12});
+        const config = authConfiguration(env);
+        const session = await readSession(request, env);
+        return json({
+          secure_email: true,
+          max_encrypted_pdf_mb: 12,
+          max_attachments: MAX_ATTACHMENTS,
+          auth: 'google',
+          auth_configured: config.configured,
+          authenticated: Boolean(session),
+          cloud_vault: config.vault_configured,
+        });
       }
       if (url.pathname === '/api/smtp/test' && request.method === 'POST') {
+        await requireSession(request, env);
         const body = await readJson(request);
         const client = new SmtpClient(body.smtp || body);
         try {
@@ -337,15 +410,20 @@ export default {
         }
       }
       if ((url.pathname === '/api/t/email-secure' || url.pathname === '/api/send-secure-email') && request.method === 'POST') {
+        await requireSession(request, env);
         const receipt = await dispatch(await readJson(request));
         return json(receipt, receipt.status === 'partial_failure' ? 207 : 200);
       }
       if (url.pathname === '/api/smtp/resend-key' && request.method === 'POST') {
+        await requireSession(request, env);
         return json(await resendKey(await readJson(request)));
       }
       if (url.pathname.startsWith('/api/')) return json({error: 'Endpoint not found'}, 404);
       return env.ASSETS ? env.ASSETS.fetch(request) : new Response('Not found', {status: 404});
     } catch (error) {
+      if (error instanceof AuthError) {
+        return json({ok: false, code: error.code, error: error.message}, error.status);
+      }
       return json({ok: false, error: error?.message || 'Unexpected email worker error'}, 400);
     }
   }

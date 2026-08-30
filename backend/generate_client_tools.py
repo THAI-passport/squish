@@ -180,6 +180,17 @@ def run_tool_wrapper(key, files_json, params_json):
         p = work_dir / f
         input_paths.append(p)
 
+    # Internal-only secure bursting path. Unlike the ordinary Split tool,
+    # this creates a fresh document tree and scrubs catalog metadata, links,
+    # annotations, forms, JavaScript and embedded files before encryption.
+    if key == "__dispatch-extract":
+        out_path = tools._dispatch_extract_pages(
+            work_dir, input_paths[0], params.get("pages", ""),
+            params.get("pdf_open_password", ""))
+        with open(out_path, 'rb') as f:
+            data = f.read()
+        return {{'name': out_path.name, 'mime': 'application/pdf', 'data': data}}
+
     # Find tool
     tool = next(t for t in tools.TOOLS if t.key == key)
     fn_name = json.loads(params.pop("__static_fn_overrides", "{{}}" )).get(key)
@@ -308,17 +319,28 @@ async function blobToBase64(blob) {{
 }}
 
 window.runStaticSecureEmail = async function(files, formData) {{
-  const pdf = files.find(f => /\\.pdf$/i.test(f.name));
-  if (!pdf) throw new Error('Secure Email Dispatch needs a PDF file.');
+  let pdfs = files.filter(f => /\\.pdf$/i.test(f.name));
+  if (!pdfs.length) throw new Error('Secure Email Dispatch needs at least one PDF file.');
+  if (pdfs.length > 10) throw new Error('A maximum of 10 PDF attachments is allowed.');
   const password = String(formData.get('custom_password') || '').trim();
   if (password.length < 4) throw new Error('Password must be at least 4 characters.');
 
-  const protectData = new FormData();
-  protectData.append('password_new', password);
-  // Never reuse the emailed user password as the owner password: doing so
-  // silently grants full PDF permissions to the recipient.
-  protectData.append('owner_password', staticRandomSecret());
-  const protectedResult = await window.runPyodideTool('protect', [pdf], protectData);
+  const dispatchPages = String(formData.get('dispatch_pages') || '').trim();
+  if (dispatchPages) {{
+    if (pdfs.length !== 1) throw new Error('Split & Dispatch accepts exactly one master PDF.');
+    const splitData = new FormData();
+    splitData.append('pages', dispatchPages);
+    const selected = await window.runPyodideTool('__dispatch-extract', [pdfs[0]], splitData);
+    pdfs = [new File([selected.blob], selected.name, {{type: 'application/pdf'}})];
+  }}
+
+  const protectedResults = [];
+  for (const pdf of pdfs) {{
+    const protectData = new FormData();
+    protectData.append('password_new', password);
+    protectData.append('owner_password', staticRandomSecret());
+    protectedResults.push(await window.runPyodideTool('protect', [pdf], protectData));
+  }}
 
   let smtp = {{}};
   const saved = formData.get('smtp_profile_json');
@@ -340,6 +362,9 @@ window.runStaticSecureEmail = async function(files, formData) {{
 
   const htmlFile = files.find(f => /\\.(html?|txt)$/i.test(f.name));
   const customHtml = String(formData.get('email_body_html') || '');
+  if (customHtml.replace(/\\s/g, '').toLowerCase().includes('{{{{password}}}}')) {{
+    throw new Error('Email #1 templates cannot contain {{password}}.');
+  }}
   let resolvedHtml = customHtml;
   if (!resolvedHtml && htmlFile) {{
     try {{
@@ -357,14 +382,17 @@ window.runStaticSecureEmail = async function(files, formData) {{
     smtp,
     recipient: String(formData.get('recipient_email') || ''),
     subject: String(formData.get('email_subject') || ''),
-    pdfBase64: await blobToBase64(protectedResult.blob),
-    pdfFilename: protectedResult.name,
+    attachments: await Promise.all(protectedResults.map(async result => ({{
+      base64: await blobToBase64(result.blob), filename: result.name
+    }}))),
     htmlBody: resolvedHtml,
+    plainTextOnly: formData.get('email_plain_text_only') === '1',
     password,
     delaySeconds: Number(formData.get('delay_seconds') || 2.5),
     email2Subject: String(formData.get('email2_subject') || ''),
     email2Body: String(formData.get('email2_body') || ''),
-    threadEmails: formData.get('thread_emails') === '1' || formData.get('thread_emails') === 'true'
+    threadEmails: formData.get('thread_emails') === '1' || formData.get('thread_emails') === 'true',
+    keyDeliveryMode: String(formData.get('key_delivery_mode') || 'email')
   }};
 
   const response = await fetch('/api/t/email-secure', {{

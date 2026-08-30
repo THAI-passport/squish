@@ -1,6 +1,8 @@
 """Tests for SMTP Manager and Secure Email Dispatch."""
 
 import json
+from datetime import datetime, timedelta, timezone
+from email import message_from_string
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -8,6 +10,41 @@ import pytest
 import fitz
 import smtp_manager
 import tools as T
+
+
+def _make_test_pdf(path, labels=("Page one",)):
+    doc = fitz.open()
+    for label in labels:
+        page = doc.new_page()
+        page.insert_text((72, 72), label)
+    doc.save(path)
+    doc.close()
+
+
+def _make_test_pkcs12(path, password):
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives.serialization import pkcs12
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Squish Test Signer")])
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    path.write_bytes(pkcs12.serialize_key_and_certificates(
+        b"squish-test", key, cert, None,
+        serialization.BestAvailableEncryption(password.encode("utf-8")),
+    ))
 
 
 def test_test_smtp_connection_validation():
@@ -67,6 +104,139 @@ def test_send_dual_secure_email(mock_smtp, tmp_path):
     assert res["ok"] is True
     assert res["recipient"] == "client@example.com"
     assert mock_inst.sendmail.call_count == 2
+
+
+@patch("smtplib.SMTP")
+def test_send_multiple_attachments_with_oob_key_only(mock_smtp, tmp_path):
+    mock_inst = MagicMock()
+    mock_smtp.return_value = mock_inst
+    paths = []
+    for name in ("contract.pdf", "appendix.pdf", "exhibit.pdf"):
+        path = tmp_path / name
+        _make_test_pdf(path)
+        paths.append(path)
+
+    result = smtp_manager.send_dual_secure_email(
+        smtp={"server": "smtp.example.com", "port": 587,
+              "username": "sender@example.com", "password": "pw"},
+        recipient="client@example.com",
+        pdf_path=paths,
+        password="Secret123!",
+        key_delivery_mode="oob",
+    )
+
+    assert result["attachments"] == [p.name for p in paths]
+    assert result["step2_sent"] is False
+    assert result["oob_required"] is True
+    assert mock_inst.sendmail.call_count == 1
+    parsed = message_from_string(mock_inst.sendmail.call_args.args[2])
+    attached = [part.get_filename() for part in parsed.walk() if part.get_filename()]
+    assert attached == [p.name for p in paths]
+
+
+@patch("smtplib.SMTP")
+def test_plain_text_template_omits_html_mime_part(mock_smtp, tmp_path):
+    mock_inst = MagicMock()
+    mock_smtp.return_value = mock_inst
+    pdf = tmp_path / "notice.pdf"
+    _make_test_pdf(pdf)
+    smtp_manager.send_dual_secure_email(
+        smtp={"server": "smtp.example.com", "port": 587,
+              "username": "sender@example.com", "password": "pw"},
+        recipient="client@example.com", pdf_path=pdf, password="Secret123!",
+        html_body="Hello client,\n\nYour protected document is attached.",
+        plain_text_only=True, key_delivery_mode="oob",
+    )
+    parsed = message_from_string(mock_inst.sendmail.call_args.args[2])
+    content_types = [part.get_content_type() for part in parsed.walk()]
+    assert "text/plain" in content_types
+    assert "text/html" not in content_types
+
+
+def test_attachment_bundle_limits_are_enforced_before_smtp(tmp_path):
+    paths = []
+    for index in range(11):
+        path = tmp_path / f"doc-{index}.pdf"
+        path.write_bytes(b"%PDF-1.7\n")
+        paths.append(path)
+    with pytest.raises(ValueError, match="maximum of 10"):
+        smtp_manager.send_dual_secure_email(
+            smtp={"server": "smtp.example.com"}, recipient="client@example.com",
+            pdf_path=paths, password="Secret123!", key_delivery_mode="oob")
+
+    oversized = tmp_path / "oversized.pdf"
+    with oversized.open("wb") as stream:
+        stream.truncate(smtp_manager.MAX_TOTAL_ATTACHMENT_BYTES + 1)
+    with pytest.raises(ValueError, match="12 MB combined"):
+        smtp_manager.send_dual_secure_email(
+            smtp={"server": "smtp.example.com"}, recipient="client@example.com",
+            pdf_path=oversized, password="Secret123!", key_delivery_mode="oob")
+
+
+def test_split_dispatch_creates_isolated_page_tree(tmp_path):
+    source = tmp_path / "master.pdf"
+    _make_test_pdf(source, ("ALPHA ONLY", "BRAVO ONLY"))
+    doc = fitz.open(source)
+    doc.set_metadata({"title": "Master secret metadata", "author": "Hidden author"})
+    doc.set_toc([[1, "Alpha", 1], [1, "Bravo", 2]])
+    doc.save(tmp_path / "master_with_catalog.pdf")
+    doc.close()
+
+    work = tmp_path / "work"
+    work.mkdir()
+    isolated = T._dispatch_extract_pages(work, tmp_path / "master_with_catalog.pdf", "2")
+    output = fitz.open(isolated)
+    assert output.page_count == 1
+    assert "BRAVO ONLY" in output[0].get_text()
+    assert "ALPHA ONLY" not in output[0].get_text()
+    assert output.get_toc() == []
+    assert not output.metadata.get("title")
+    assert not output.metadata.get("author")
+    output.close()
+
+
+def test_sign_dispatch_encrypts_then_adds_valid_incremental_signature(tmp_path):
+    from pyhanko.pdf_utils.reader import PdfFileReader
+    from pyhanko.sign import validation
+    from pyhanko_certvalidator import ValidationContext
+
+    source = tmp_path / "contract.pdf"
+    _make_test_pdf(source, ("Signed contract",))
+    cert = tmp_path / "signer.p12"
+    _make_test_pkcs12(cert, "certificate-secret")
+    work = tmp_path / "work"
+    work.mkdir()
+
+    encrypted = T._dispatch_protect_pdf(
+        work, source, "RecipientSecret!", "IndependentOwnerSecret!", "encrypted",
+        sign_compatible=True)
+    signed = T._dispatch_sign_encrypted_pdf(
+        work, encrypted, "RecipientSecret!", cert, "certificate-secret", "SquishSignature1")
+
+    with signed.open("rb") as stream:
+        reader = PdfFileReader(stream)
+        assert reader.encrypted
+        assert reader.decrypt("RecipientSecret!").status.name == "USER"
+        signatures = list(reader.embedded_signatures)
+        assert len(signatures) == 1
+        status = validation.validate_pdf_signature(
+            signatures[0], signer_validation_context=ValidationContext(
+                trust_roots=[], allow_fetching=False))
+        assert status.intact and status.valid
+
+
+def test_email1_rejects_password_placeholder_before_smtp(tmp_path):
+    source = tmp_path / "doc.pdf"
+    _make_test_pdf(source)
+    work = tmp_path / "work"
+    work.mkdir()
+    with pytest.raises(T.ToolError, match="cannot contain"):
+        T.email_secure(work, [source], {
+            "recipient_email": "client@example.com",
+            "password_mode": "manual",
+            "custom_password": "Secret123!",
+            "email_body_html": "<p>Password: {{ password }}</p>",
+        })
 
 
 @patch("smtplib.SMTP")
@@ -393,3 +563,73 @@ def test_send_dual_secure_email_threading(mock_smtp, tmp_path):
     assert "In-Reply-To:" in email2_raw
     assert "References:" in email2_raw
     assert "Subject: Re: [Secure Document] Invoice #1024" in email2_raw
+
+
+@patch("smtplib.SMTP")
+def test_send_dual_secure_email_multi_relay_failover(mock_smtp, tmp_path):
+    primary = MagicMock()
+    fallback = MagicMock()
+    mock_smtp.side_effect = [primary, fallback]
+    primary.ehlo.return_value = (250, b"ok")
+    primary.sendmail.side_effect = Exception("primary 550 relay denied")
+    fallback.ehlo.return_value = (250, b"ok")
+
+    pdf_path = tmp_path / "doc.pdf"
+    doc = fitz.open()
+    doc.new_page()
+    doc.save(pdf_path)
+    doc.close()
+
+    res = smtp_manager.send_dual_secure_email(
+        smtp=[
+            {"server": "primary.relay.com", "port": 587, "username": "user@primary.com", "password": "pw1"},
+            {"server": "backup.relay.com", "port": 587, "username": "user@backup.com", "password": "pw2"},
+        ],
+        recipient="client@example.com",
+        pdf_path=pdf_path,
+        password="MySecretKey123!",
+        delay_seconds=0.05
+    )
+
+    assert res["ok"] is True
+    assert "backup.relay.com" in res["relay_used"]
+    assert fallback.sendmail.call_count == 2
+
+
+@patch("smtplib.SMTP")
+def test_email_secure_tool_includes_stego_tag_and_relay(mock_smtp, tmp_path):
+    mock_inst = MagicMock()
+    mock_smtp.return_value = mock_inst
+    mock_inst.ehlo.return_value = (250, b"ok")
+
+    work = tmp_path / "work"
+    work.mkdir()
+    src_pdf = tmp_path / "sample.pdf"
+    doc = fitz.open()
+    doc.new_page()
+    doc.save(src_pdf)
+    doc.close()
+
+    result = T.email_secure(
+        work=work,
+        inputs=[src_pdf],
+        p={
+            "recipient_email": "vip@example.com",
+            "password_mode": "manual",
+            "custom_password": "MySecretPass999!",
+            "mail_server": "smtp.example.com",
+            "mail_port": "587",
+            "mail_username": "sender@example.com",
+            "mail_password": "pwd",
+            "recipient_watermark": "1",
+            "delay_seconds": "0.05",
+        }
+    )
+
+    data = json.loads(result.path.read_text(encoding="utf-8"))
+    assert data["status"] == "success"
+    assert data["step1_sent"] is True
+    assert data["step2_sent"] is True
+    assert "stego_tag" in data
+    assert len(data["stego_tag"]) == 8
+    assert "smtp.example.com" in data["relay_used"]

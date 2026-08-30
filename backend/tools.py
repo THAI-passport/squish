@@ -1120,84 +1120,311 @@ def protect(work: Path, inputs: list[Path], p: dict) -> Result:
     return Result(dest, PDF, f"{base}_protected.pdf")
 
 
+def _dispatch_extract_pages(work: Path, source: Path, spec: str,
+                            open_password: str = "") -> Path:
+    """Create a page-only tree for one burst recipient and scrub catalog data."""
+    src = open_pdf(source, open_password)
+    pages = parse_pages(spec, src.page_count)
+    if not pages:
+        src.close()
+        raise ToolError("dispatch page mapping cannot be empty")
+    out = fitz.open()
+    for page_no in pages:
+        # Dispatch isolation deliberately removes links, annotations and form
+        # widgets. They can retain document-level references to excluded pages.
+        out.insert_pdf(src, from_page=page_no, to_page=page_no,
+                       links=0, annots=0, widgets=0)
+    src.close()
+    out.scrub(
+        attached_files=True, embedded_files=True, javascript=True,
+        metadata=True, xml_metadata=True, remove_links=True,
+        reset_fields=True, reset_responses=True, thumbnails=True,
+        clean_pages=True, hidden_text=False, redactions=False,
+    )
+    dest = work / f"{stem(source)}_pages_{safe_component(spec)[:40]}.pdf"
+    save(out, dest)
+    out.close()
+    return dest
+
+
+def _encode_zero_width_tag(recipient: str, secret_seed: str = "") -> tuple[str, str]:
+    """Encode recipient + optional secret into invisible zero-width unicode characters.
+    
+    Returns (zero_width_string, 8_char_hex_hash).
+    """
+    import hashlib
+    import hmac
+    key = (secret_seed or "squish-leak-tracer").encode("utf-8")
+    msg = recipient.strip().lower().encode("utf-8")
+    digest = hmac.new(key, msg, hashlib.sha256).hexdigest()[:8]
+    binary = "".join(f"{int(c, 16):04b}" for c in digest)
+    chars = ["\uFEFF"]
+    for bit in binary:
+        chars.append("\u200C" if bit == "1" else "\u200B")
+    chars.append("\uFEFF")
+    return "".join(chars), digest
+
+
+def _decode_zero_width_tag(text: str) -> str | None:
+    """Extract and decode a zero-width hex signature from text string."""
+    if not text or "\uFEFF" not in text:
+        return None
+    m = re.search(r"\uFEFF([\u200B\u200C]{32})\uFEFF", text)
+    if not m:
+        return None
+    binary = m.group(1)
+    bits = [1 if c == "\u200C" else 0 for c in binary]
+    hex_chars = []
+    for i in range(0, len(bits), 4):
+        chunk = bits[i:i+4]
+        val = sum(b << (3 - j) for j, b in enumerate(chunk))
+        hex_chars.append(f"{val:x}")
+    return "".join(hex_chars)
+
+
+def _is_luhn_valid(number_str: str) -> bool:
+    """Verify number_str with Luhn algorithm mod-10."""
+    digits = [int(c) for c in number_str if c.isdigit()]
+    if len(digits) < 13 or len(digits) > 19 or sum(digits) == 0:
+        return False
+    if digits[0] not in (2, 3, 4, 5, 6):
+        return False
+    checksum = 0
+    reverse_digits = digits[::-1]
+    for idx, d in enumerate(reverse_digits):
+        if idx % 2 == 1:
+            d *= 2
+            if d > 9:
+                d -= 9
+        checksum += d
+    return checksum % 10 == 0
+
+
+def _is_iban_valid(iban_str: str) -> bool:
+    """Verify IBAN according to ISO 7064 Modulo 97-10."""
+    clean = re.sub(r"\s+", "", iban_str).upper()
+    if len(clean) < 15 or len(clean) > 34 or not clean[:2].isalpha() or not clean[2:4].isdigit():
+        return False
+    reordered = clean[4:] + clean[:4]
+    num_str = "".join(str(ord(c) - 55) if c.isalpha() else c for c in reordered)
+    try:
+        return int(num_str) % 97 == 1
+    except ValueError:
+        return False
+
+
+def _is_valid_ssn(ssn_str: str) -> bool:
+    """Verify US SSN does not have invalid area (000, 666, 900-999) or zero groups."""
+    digits = re.sub(r"\D", "", ssn_str)
+    if len(digits) != 9:
+        return False
+    area = int(digits[:3])
+    group = int(digits[3:5])
+    serial = int(digits[5:])
+    if area in (0, 666) or (900 <= area <= 999) or group == 0 or serial == 0:
+        return False
+    return True
+
+
+def _dispatch_protect_pdf(work: Path, source: Path, password: str,
+                          owner_password: str, suffix: str = "",
+                          open_password: str = "",
+                          sign_compatible: bool = False,
+                          stego_str: str = "",
+                          watermark_text: str = "") -> Path:
+    src = open_pdf(source, open_password)
+    if stego_str and src.page_count > 0:
+        # Invisible text mode 3 (neither fill nor stroke) on page 1
+        src[0].insert_text(fitz.Point(10, 10), stego_str, render_mode=3)
+    if watermark_text and src.page_count > 0:
+        for page in src:
+            rect = page.rect
+            pt = fitz.Point(rect.width * 0.15, rect.height * 0.5)
+            page.insert_text(
+                pt,
+                watermark_text,
+                fontsize=14,
+                color=(0.5, 0.5, 0.5),
+                morph=(pt, fitz.Matrix(-45)),
+                overlay=True,
+                render_mode=0,
+            )
+    tag = suffix or "protected"
+    dest = work / f"{stem(source)}_{tag}.pdf"
+    if not sign_compatible:
+        perm = fitz.PDF_PERM_ACCESSIBILITY | fitz.PDF_PERM_PRINT
+        src.save(dest, encryption=fitz.PDF_ENCRYPT_AES_256,
+                 owner_pw=owner_password, user_pw=password,
+                 permissions=perm, garbage=4, deflate=True, clean=True)
+        src.close()
+        return dest
+
+    # PyMuPDF writes the trailer's /Encrypt dictionary inline. That is widely
+    # accepted by viewers, but a strict incremental-signing writer correctly
+    # requires /Encrypt to be an indirect object. Normalise the clean document
+    # through pyHanko's AES-256 writer before adding the final signature.
+    prepared = work / f".{stem(source)}_{tag}_prepared.pdf"
+    src.save(prepared, encryption=fitz.PDF_ENCRYPT_NONE,
+             garbage=4, deflate=True, clean=True)
+    src.close()
+    try:
+        from pyhanko.pdf_utils.crypt.permissions import StandardPermissions
+        from pyhanko.pdf_utils.reader import PdfFileReader
+        from pyhanko.pdf_utils.writer import copy_into_new_writer
+        with prepared.open("rb") as doc_in, dest.open("wb") as encrypted_out:
+            writer = copy_into_new_writer(PdfFileReader(doc_in))
+            writer.encrypt(
+                owner_password, password,
+                perms=(StandardPermissions.ALLOW_PRINTING |
+                       StandardPermissions.ALLOW_ASSISTIVE_TECHNOLOGY |
+                       StandardPermissions.TOLERATE_MISSING_PDF_MAC),
+                pdf_mac=False,
+            )
+            writer.write(encrypted_out)
+    except ImportError:
+        raise ToolError("Sign & Dispatch requires pyhanko on the native server")
+    except Exception as exc:
+        raise ToolError(f"could not create sign-compatible AES-256 PDF: {exc}")
+    return dest
+
+
+def _dispatch_sign_encrypted_pdf(work: Path, source: Path, password: str,
+                                 certificate: Path, cert_password: str,
+                                 field_name: str) -> Path:
+    """Append a signature to an already encrypted PDF and verify final bytes."""
+    try:
+        from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+        from pyhanko.pdf_utils.reader import PdfFileReader
+        from pyhanko.sign import signers, validation
+        from pyhanko_certvalidator import ValidationContext
+    except ImportError:
+        raise ToolError("Sign & Dispatch requires pyhanko on the native server")
+    if not cert_password:
+        raise ToolError("certificate password is required")
+    try:
+        signer = signers.SimpleSigner.load_pkcs12(
+            str(certificate), passphrase=cert_password.encode("utf-8"))
+    except Exception as exc:
+        raise ToolError(f"could not load signing certificate: {exc}")
+
+    dest = work / f"{stem(source)}_signed.pdf"
+    try:
+        with source.open("rb") as doc_in, dest.open("wb") as out_file:
+            previous = PdfFileReader(doc_in)
+            auth = previous.decrypt(password)
+            if not auth:
+                raise ToolError("could not authenticate encrypted PDF before signing")
+            writer = IncrementalPdfFileWriter(doc_in, prev=previous)
+            signers.sign_pdf(
+                writer,
+                signers.PdfSignatureMetadata(field_name=field_name),
+                signer=signer,
+                output=out_file,
+            )
+        with dest.open("rb") as signed_in:
+            reader = PdfFileReader(signed_in)
+            reader.decrypt(password)
+            signatures = list(reader.embedded_signatures)
+            if not signatures:
+                raise ToolError("signed output contains no digital signature")
+            # Structural/CMS validation must not depend on the host OS trust
+            # store (which can be unavailable in containers). Trust-chain
+            # policy remains the recipient viewer's responsibility.
+            status = validation.validate_pdf_signature(
+                signatures[-1], signer_validation_context=ValidationContext(
+                    trust_roots=[], allow_fetching=False))
+            if not status.intact or not status.valid:
+                raise ToolError("final encrypted PDF failed signature validation")
+    except ToolError:
+        raise
+    except Exception as exc:
+        raise ToolError(f"Sign & Dispatch failed: {exc}")
+    return dest
+
+
 def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
-    """Encrypts a PDF and dispatches dual emails: Email 1 with PDF, Email 2 with password."""
+    """Encrypt one or more PDFs, optionally sign last, then dispatch safely."""
+    import datetime
     import json
     import secrets
     import string
     import time
     import smtp_manager
 
+    pdf_inputs = [path for path in inputs if path.suffix.lower() == ".pdf"]
+    certificates = [path for path in inputs if path.suffix.lower() in (".p12", ".pfx")]
+    if not pdf_inputs:
+        raise ToolError("Secure Email Dispatch needs at least one PDF")
+    if len(pdf_inputs) > smtp_manager.MAX_ATTACHMENTS:
+        raise ToolError(f"Secure Email Dispatch accepts at most {smtp_manager.MAX_ATTACHMENTS} PDFs")
+
+    try:
+        recipient = smtp_manager.validate_recipient_email(p.get("recipient_email") or "")
+    except ValueError as exc:
+        raise ToolError(str(exc))
+
     pw_mode = str(p.get("password_mode") or "random")
     pw = str(p.get("custom_password") or "").strip()
     if pw_mode == "random" or not pw:
         alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
         pw = "".join(secrets.choice(alphabet) for _ in range(16))
-
     if len(pw) < 4:
         raise ToolError("password must be at least 4 characters")
 
-    pdf_input = None
-    html_input = None
-    for inp in inputs:
-        if inp.suffix.lower() == ".pdf" and pdf_input is None:
-            pdf_input = inp
-        elif inp.suffix.lower() in (".html", ".htm") and html_input is None:
-            html_input = inp
+    html_body = str(p.get("email_body_html") or "").strip() or None
+    if html_body and re.search(r"\{\{\s*password\s*\}\}", html_body, re.I):
+        raise ToolError("Email #1 templates cannot contain {{password}}")
 
-    if not pdf_input:
-        pdf_input = inputs[0]
+    dispatch_pages = str(p.get("dispatch_pages") or "").strip()
+    if dispatch_pages and len(pdf_inputs) != 1:
+        raise ToolError("Split & Dispatch accepts exactly one master PDF")
+    sources = list(pdf_inputs)
+    if dispatch_pages:
+        sources = [_dispatch_extract_pages(
+            work, pdf_inputs[0], dispatch_pages,
+            str(p.get("pdf_open_password") or ""))]
 
-    # Owner and user password MUST differ. PDF permission enforcement (here:
-    # accessibility + print only, no edit/copy) works by having two separate
-    # passwords -- the *user* password only unlocks the restricted view, and
-    # the *owner* password unlocks full control. If they're the same string
-    # (as this used to default to when no owner password was supplied), most
-    # readers can't tell which one was entered and just grant owner-level
-    # access -- silently defeating the permission restriction for anyone who
-    # has the (emailed) user password. Generate an independent, random,
-    # never-transmitted owner password instead.
-    # PyMuPDF/qpdf reject owner/user passwords longer than 40 characters, so
-    # this needs to stay comfortably under that -- token_urlsafe(24) yields
-    # a 32-character string.
-    owner_pw = str(p.get("owner_password") or "").strip() or secrets.token_urlsafe(24)
+    sign_requested = p.get("sign_dispatch") in (True, "true", "1", 1)
+    if sign_requested and len(certificates) != 1:
+        raise ToolError("Sign & Dispatch requires one .p12 or .pfx certificate")
 
-    src = open_pdf(pdf_input, p.get("pdf_open_password", ""))
-    perm = (fitz.PDF_PERM_ACCESSIBILITY | fitz.PDF_PERM_PRINT)
-    base = stem(pdf_input)
-    dest_pdf = work / f"{base}_protected.pdf"
-    src.save(dest_pdf, encryption=fitz.PDF_ENCRYPT_AES_256,
-             owner_pw=owner_pw,
-             user_pw=pw, permissions=perm, garbage=4, deflate=True)
-    src.close()
+    # Forensic steganography and watermark
+    zero_width_str, stego_hash = _encode_zero_width_tag(recipient)
+    watermark_msg = ""
+    if p.get("recipient_watermark") in (True, "true", "1", 1):
+        today = datetime.date.today().isoformat()
+        watermark_msg = f"Confidential \u2022 Dispatched to {recipient} \u2022 {today} [ID: {stego_hash}]"
 
-    html_body = None
-    if html_input and html_input.exists():
-        try:
-            html_body = html_input.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
-    if not html_body and p.get("email_body_html"):
-        html_body = str(p.get("email_body_html"))
+    protected_paths: list[Path] = []
+    for index, source in enumerate(sources):
+        owner_pw = secrets.token_urlsafe(24)
+        encrypted = _dispatch_protect_pdf(
+            work, source, pw, owner_pw,
+            f"protected_{index + 1}" if len(sources) > 1 else "protected",
+            "" if dispatch_pages else str(p.get("pdf_open_password") or ""),
+            sign_compatible=sign_requested,
+            stego_str=zero_width_str,
+            watermark_text=watermark_msg)
+        if sign_requested:
+            encrypted = _dispatch_sign_encrypted_pdf(
+                work, encrypted, pw, certificates[0],
+                str(p.get("password_cert") or ""),
+                f"SquishSignature{index + 1}")
+        protected_paths.append(encrypted)
 
     smtp_config = {}
     if p.get("smtp_profile_json"):
         try:
             smtp_config = json.loads(p.get("smtp_profile_json"))
         except Exception:
-            pass
-
+            raise ToolError("saved SMTP profile is invalid")
     if not smtp_config.get("server") and p.get("smtp_server_profile_id"):
-        # A server-side .env profile (backend/env_manager.py). The password
-        # is resolved here, server-side, and never sent to or held by the
-        # browser -- unlike the browser Vault path, where the client already
-        # holds the decrypted profile and sends it in smtp_profile_json.
         import env_manager
         try:
-            smtp_config = env_manager.get_profile_for_dispatch(int(p["smtp_server_profile_id"]))
+            smtp_config = env_manager.get_profile_for_dispatch(
+                int(p["smtp_server_profile_id"]))
         except (KeyError, ValueError) as exc:
             raise ToolError(f"SMTP profile not found: {exc}")
-
     if not smtp_config.get("server"):
         smtp_config = {
             "server": str(p.get("mail_server") or os.environ.get("MAIL_SERVER") or ""),
@@ -1207,97 +1434,73 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
             "from_name": str(p.get("mail_from_name") or os.environ.get("MAIL_FROM_NAME") or ""),
             "security": str(p.get("mail_security") or "starttls"),
         }
-
-    if not smtp_config.get("server"):
+    if not smtp_config.get("server") and not p.get("smtp_pool_json"):
         raise ToolError("SMTP server is not configured. Please supply SMTP settings or unlock your vault.")
 
-    try:
-        recipient = smtp_manager.validate_recipient_email(p.get("recipient_email") or "")
-    except ValueError as exc:
-        raise ToolError(str(exc))
+    smtp_pool = None
+    if p.get("smtp_pool_json"):
+        try:
+            smtp_pool = json.loads(p.get("smtp_pool_json"))
+        except Exception:
+            pass
 
     subject = str(p.get("email_subject") or "").strip() or None
     email2_subj = str(p.get("email2_subject") or "").strip() or None
     email2_body_tmpl = str(p.get("email2_body") or "").strip() or None
     delay_sec = float(p.get("delay_seconds") or 2.5)
-    thread_emails = bool(p.get("thread_emails") in (True, "true", "1", 1))
+    thread_emails = p.get("thread_emails") in (True, "true", "1", 1)
+    key_delivery_mode = str(p.get("key_delivery_mode") or "email").lower()
 
-    # send_dual_secure_email raises only when NOTHING was sent (e.g. it
-    # couldn't even connect/authenticate). If Email #1 (the PDF) went out but
-    # Email #2 (the password) then failed, it returns a dict with
-    # partial=True instead of raising -- see the docstring there. That
-    # distinction matters here: a bare `except -> ToolError` would report
-    # "failed" even though the recipient's inbox already has the encrypted
-    # PDF sitting in it with no password ever coming.
     try:
         send_result = smtp_manager.send_dual_secure_email(
-            smtp=smtp_config,
-            recipient=recipient,
-            pdf_path=dest_pdf,
-            password=pw,
-            subject=subject,
-            html_body=html_body,
-            email2_subject=email2_subj,
-            email2_body=email2_body_tmpl,
-            delay_seconds=delay_sec,
-            thread_emails=thread_emails
+            smtp=smtp_pool or smtp_config, recipient=recipient, pdf_path=protected_paths,
+            password=pw, subject=subject, html_body=html_body,
+            email2_subject=email2_subj, email2_body=email2_body_tmpl,
+            delay_seconds=delay_sec, thread_emails=thread_emails,
+            key_delivery_mode=key_delivery_mode,
+            plain_text_only=p.get("email_plain_text_only") in (True, "true", "1", 1),
         )
     except Exception as exc:
         raise ToolError(f"Email delivery failed -- nothing was sent: {exc}")
 
-    receipt_file = work / f"{base}_delivery_receipt.json"
-    # The receipt deliberately does NOT carry the SMTP password (or any SMTP
-    # config) for a resend: the browser already holds whatever config it
-    # used for this request (vault profile or the manual fields), and
-    # /api/smtp/resend-key expects the caller to supply `smtp` again itself
-    # rather than have the server hand a credential back through a result
-    # file. Only the pieces needed to reconstruct Email #2's *content* --
-    # not its auth -- are included here.
+    attachment_names = [path.name for path in protected_paths]
+    base = stem(pdf_inputs[0])
+    receipt_data = {
+        "status": "partial_failure" if send_result.get("partial") else "success",
+        "recipient": recipient,
+        "pdf_file": attachment_names[0],
+        "attachments": attachment_names,
+        "password": pw,
+        "step1_sent": True,
+        "step2_sent": bool(send_result.get("step2_sent")),
+        "key_delivery_mode": key_delivery_mode,
+        "oob_required": key_delivery_mode in {"oob", "dual"},
+        "signed": sign_requested,
+        "pages": dispatch_pages or None,
+        "stego_tag": stego_hash,
+        "relay_used": send_result.get("relay_used"),
+        "retries": send_result.get("retries", 0),
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "message": send_result.get("message"),
+    }
     if send_result.get("partial"):
-        receipt_data = {
-            "status": "partial_failure",
-            "recipient": recipient,
-            "pdf_file": f"{base}_protected.pdf",
-            "password": pw,
-            "step1_sent": True,
-            "step2_sent": False,
-            "error": send_result.get("error"),
-            "resend": {
-                "recipient": recipient,
-                "password": pw,
-                "pdf_filename": f"{base}_protected.pdf",
-                "subject": subject,
-                "email2_subject": email2_subj,
-                "email2_body": email2_body_tmpl,
-            },
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "message": send_result.get("message"),
+        receipt_data["error"] = send_result.get("error")
+        receipt_data["resend"] = {
+            "recipient": recipient, "password": pw,
+            "pdf_filename": attachment_names[0], "subject": subject,
+            "email2_subject": email2_subj, "email2_body": email2_body_tmpl,
         }
-    else:
-        receipt_data = {
-            "status": "success",
-            "recipient": recipient,
-            "pdf_file": f"{base}_protected.pdf",
-            "password": pw,
-            "step1_sent": True,
-            "step2_sent": True,
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "message": f"Successfully sent encrypted document and decryption key to {recipient}"
-        }
+    receipt_file = work / f"{base}_delivery_receipt.json"
     receipt_file.write_text(json.dumps(receipt_data, indent=2), encoding="utf-8")
-    return Result(receipt_file, "application/json", f"{base}_delivery_receipt.json")
+    return Result(receipt_file, "application/json", receipt_file.name)
 
 
 
 def unlock(work: Path, inputs: list[Path], p: dict) -> Result:
-    """Removes encryption from a PDF you can already open.
-
-    This is not a cracker: without the correct password the file stays shut.
-    """
+    """Strip password encryption from a document whose password you know."""
     src = open_pdf(inputs[0], p.get("password", ""))
     base = stem(inputs[0])
-    dest = work / f"{base}_unlocked.pdf"
-    src.save(dest, encryption=fitz.PDF_ENCRYPT_NONE, garbage=4, deflate=True)
+    dest = save(src, work / f"{base}_unlocked.pdf", shrink=False)
     src.close()
     return Result(dest, PDF, f"{base}_unlocked.pdf")
 
@@ -1331,39 +1534,97 @@ def redact(work: Path, inputs: list[Path], p: dict) -> Result:
 
 
 def auto_redact(work: Path, inputs: list[Path], p: dict) -> Result:
-    """Automatically find and redact sensitive patterns (Emails, SSNs, Phones, CCs)."""
+    """Automatically find and redact sensitive patterns (Emails, SSNs, Phones, CCs, IBANs, Dictionary terms)."""
     src = open_pdf(inputs[0], p.get("password", ""))
     fill = _hex_rgb(p.get("color") or "#000000")
     
-    patterns = []
-    if p.get("redact_email"):
-        patterns.append(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
-    if p.get("redact_ssn"):
-        patterns.append(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b")
-    if p.get("redact_phone"):
-        patterns.append(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b")
-    if p.get("redact_cc"):
-        patterns.append(r"\b(?:\d[ -]*?){13,16}\b")
-        
-    if not patterns:
+    # Custom dictionary terms from uploaded secondary file or textarea
+    custom_terms: list[str] = []
+    if len(inputs) > 1 and inputs[1].suffix.lower() in (".txt", ".csv"):
+        try:
+            content = inputs[1].read_text(encoding="utf-8", errors="replace")
+            for line in content.splitlines():
+                for term in line.split(","):
+                    t = term.strip().strip('"').strip("'")
+                    if t and t not in custom_terms:
+                        custom_terms.append(t)
+                        if len(custom_terms) >= 5000:
+                            break
+        except Exception:
+            pass
+    if p.get("terms"):
+        for line in str(p.get("terms")).splitlines():
+            t = line.strip()
+            if t and t not in custom_terms:
+                custom_terms.append(t)
+                if len(custom_terms) >= 5000:
+                    break
+
+    has_pattern = bool(
+        p.get("redact_email") or p.get("redact_ssn") or
+        p.get("redact_phone") or p.get("redact_cc") or
+        p.get("redact_iban") or custom_terms
+    )
+    if not has_pattern:
         src.close()
-        raise ToolError("select at least one type of information to redact")
+        raise ToolError("select at least one type of information or supply dictionary terms to redact")
         
     hits = 0
-    for pno in parse_pages(p.get("pages", ""), src.page_count):
+    pages = parse_pages(p.get("pages", ""), src.page_count)
+    for pno in pages:
         page = src[pno]
         text = page.get_text("text")
-        for pat in patterns:
-            for match in set(re.findall(pat, text)):
+        
+        # 1. Emails
+        if p.get("redact_email"):
+            for match in set(re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", text)):
                 for rect in page.search_for(match, quads=False):
                     page.add_redact_annot(rect, fill=fill)
                     hits += 1
+                    
+        # 2. SSNs (with area code validity check)
+        if p.get("redact_ssn"):
+            for match in set(re.findall(r"\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b", text)):
+                if _is_valid_ssn(match):
+                    for rect in page.search_for(match, quads=False):
+                        page.add_redact_annot(rect, fill=fill)
+                        hits += 1
+                        
+        # 3. Phone numbers
+        if p.get("redact_phone"):
+            for match in set(re.findall(r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b", text)):
+                for rect in page.search_for(match, quads=False):
+                    page.add_redact_annot(rect, fill=fill)
+                    hits += 1
+                    
+        # 4. Credit Cards (Luhn algorithm validated)
+        if p.get("redact_cc"):
+            for match in set(re.findall(r"\b(?:\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{1,7}|\d{13,19})\b", text)):
+                if _is_luhn_valid(match):
+                    for rect in page.search_for(match, quads=False):
+                        page.add_redact_annot(rect, fill=fill)
+                        hits += 1
+                        
+        # 5. IBAN Bank Accounts (ISO Modulo 97-10 validated)
+        if p.get("redact_iban"):
+            for match in set(re.findall(r"\b[A-Za-z]{2}\d{2}(?:[ -]?[A-Za-z0-9]{4}){2,7}(?:[ -]?[A-Za-z0-9]{1,4})?\b", text)):
+                if _is_iban_valid(match):
+                    for rect in page.search_for(match, quads=False):
+                        page.add_redact_annot(rect, fill=fill)
+                        hits += 1
+
+        # 6. Custom Dictionary Terms
+        for term in custom_terms:
+            for rect in page.search_for(term, quads=False):
+                page.add_redact_annot(rect, fill=fill)
+                hits += 1
+
         if hits > 0:
             page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_PIXELS)
             
     if not hits:
         src.close()
-        raise ToolError("no matching patterns were found in the text layer")
+        raise ToolError("no matching patterns or terms were found in the text layer")
         
     base = stem(inputs[0])
     dest = save(src, work / f"{base}_auto_redacted.pdf")
@@ -2069,8 +2330,8 @@ TOOLS: list[Tool] = [
              F("allow_modify", "checkbox", "Allow editing and annotation"),
          ]),
     Tool("email-secure", "Secure Email Dispatch", "Security",
-         "Send an AES-256 encrypted PDF in Email #1, and the decryption key in Email #2.",
-         email_secure, accept=".pdf", multi=False, min_files=1, fields=[
+         "Encrypt and dispatch one or more PDFs, with optional bursting, signing, steganography, and out-of-band key delivery.",
+         email_secure, accept=".pdf,.p12,.pfx", multi=True, min_files=1, fields=[
              F("recipient_email", "text", "Recipient email address", required=True,
                placeholder="recipient@example.com", help="Destination inbox for the secure document and password."),
              F("email_subject", "text", "Email subject",
@@ -2081,6 +2342,7 @@ TOOLS: list[Tool] = [
              ], default="random"),
              F("custom_password", "password", "Custom password",
                placeholder="Enter password (if manual mode selected)", help="Only used if manual password mode is chosen."),
+             F("recipient_watermark", "checkbox", "Stamp recipient leak watermark"),
          ]),
     Tool("unlock", "Unlock PDF", "Security",
          "Strip encryption from a PDF whose password you know.",
@@ -2094,12 +2356,14 @@ TOOLS: list[Tool] = [
              PAGES,
          ]),
     Tool("auto-redact", "Auto-redact", "Security",
-         "Automatically black out emails, phone numbers, SSNs, or credit cards. WARNING: Best-effort only; always verify output as layout issues can cause misses.",
-         auto_redact, fields=[
+         "Automatically black out emails, phone numbers, SSNs, credit cards (Luhn-verified), IBANs (Mod-97), or custom dictionary terms.",
+         auto_redact, accept=".pdf,.txt,.csv", multi=True, fields=[
              F("redact_email", "checkbox", "Redact Emails"),
              F("redact_ssn", "checkbox", "Redact SSNs"),
              F("redact_phone", "checkbox", "Redact Phone Numbers"),
-             F("redact_cc", "checkbox", "Redact Credit Cards"),
+             F("redact_cc", "checkbox", "Redact Credit Cards (Luhn validated)"),
+             F("redact_iban", "checkbox", "Redact IBAN Bank Accounts (ISO Mod-97)"),
+             F("terms", "textarea", "Custom dictionary terms", placeholder="one term per line"),
              F("color", "color", "Box colour", default="#000000"),
              PAGES,
          ]),

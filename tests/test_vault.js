@@ -149,7 +149,54 @@ async function runTests() {
   assert.strictEqual(hist[0].recipient, 'client@example.com');
   assert.strictEqual(hist[0].pdf_filename, 'Invoice_101_protected.pdf');
 
-  // 11. Wipe All
+  // 11. Custom templates reject password crossover and survive vault backup.
+  await Vault.unlockVault('4829');
+  const templateId = await Vault.saveTemplate({
+    name: 'Legal notice',
+    subject: 'Confidential {{doc_name}}',
+    html: '<h2>Legal delivery</h2><p>Hello {{name}}</p>'
+  });
+  assert.ok(templateId.startsWith('tmpl_'));
+  assert.strictEqual(Vault.getTemplates().length, 1);
+  let passwordTemplateBlocked = false;
+  try {
+    await Vault.saveTemplate({ name: 'Unsafe', html: '<p>{{ password }}</p>' });
+  } catch (err) {
+    passwordTemplateBlocked = true;
+    assert.ok(err.message.includes('cannot contain'));
+  }
+  assert.strictEqual(passwordTemplateBlocked, true);
+
+  const backup = await Vault.exportBackup('correct horse battery staple');
+  const envelope = JSON.parse(backup);
+  assert.strictEqual(envelope.magic, 'SQUISHVAULT');
+  assert.strictEqual(envelope.kdf.iterations, 300000);
+  assert.strictEqual(envelope.cipher, 'AES-256-GCM');
+  assert.ok(!backup.includes('SuperSecretPassword123!'), 'Profile secret is encrypted in backup');
+  assert.ok(!backup.includes('ClientSecretPassword789!'), 'History secret is encrypted in backup');
+
+  const tampered = JSON.parse(backup);
+  tampered.ciphertext = (tampered.ciphertext[0] === 'A' ? 'B' : 'A') + tampered.ciphertext.slice(1);
+  let tamperBlocked = false;
+  try {
+    await Vault.importBackup(JSON.stringify(tampered), 'correct horse battery staple', 'replace');
+  } catch (err) {
+    tamperBlocked = true;
+    assert.ok(err.message.includes('tampered'));
+  }
+  assert.strictEqual(tamperBlocked, true, 'AES-GCM rejects a modified backup');
+
+  Vault.wipeAll();
+  Vault.clearDispatchHistory();
+  await Vault.initVault('7391');
+  const imported = await Vault.importBackup(backup, 'correct horse battery staple', 'replace');
+  assert.strictEqual(imported.profiles, 4);
+  assert.strictEqual(imported.templates, 1);
+  assert.strictEqual(imported.history, 1);
+  assert.strictEqual(Vault.getTemplates()[0].name, 'Legal notice');
+  assert.strictEqual(await Vault.revealDispatchPassword(rec1.id), 'ClientSecretPassword789!');
+
+  // 12. Wipe All
   Vault.wipeAll();
   assert.strictEqual(Vault.isConfigured(), false, 'Vault wiped from storage');
   assert.strictEqual(Vault.isUnlocked(), false, 'Vault cleared from RAM');

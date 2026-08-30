@@ -545,6 +545,62 @@ def test_auto_redact_needs_a_type_selected(work, pdf):
         T.auto_redact(work, [pdf], {})
 
 
+def test_auto_redact_luhn_credit_cards(work):
+    valid_cc = "4532 0150 1234 5671"  # Luhn passes
+    invalid_cc = "1234 5678 1234 5678"  # Luhn fails
+    src = _pdf_with(work, f"Valid: {valid_cc} and Invalid: {invalid_cc}")
+    r = T.auto_redact(work, [src], {"redact_cc": "1"})
+    out_text = text_of(r.path)
+    assert valid_cc not in out_text
+    assert invalid_cc in out_text
+
+
+def test_auto_redact_iban(work):
+    valid_iban = "DE89 3704 0044 0532 0130 00"
+    invalid_iban = "DE89 0000 0000 0000 0000 00"
+    src = _pdf_with(work, f"Pay to {valid_iban} or {invalid_iban}")
+    r = T.auto_redact(work, [src], {"redact_iban": "1"})
+    out_text = text_of(r.path)
+    assert "0532" not in out_text
+    assert invalid_iban in out_text
+
+
+def test_auto_redact_custom_dictionary(work):
+    src = _pdf_with(work, "Secret project ProjectManhattan must remain confidential")
+    dict_file = work / "terms.txt"
+    dict_file.write_text("ProjectManhattan\nconfidential", encoding="utf-8")
+    r = T.auto_redact(work, [src, dict_file], {})
+    out_text = text_of(r.path)
+    assert "ProjectManhattan" not in out_text
+    assert "confidential" not in out_text
+    assert "Secret project" in out_text
+
+
+def test_steganography_encoding_and_extraction():
+    recipient = "agent007@secret.gov"
+    zero_str, tag_hash = T._encode_zero_width_tag(recipient)
+    assert len(tag_hash) == 8
+    assert "\uFEFF" in zero_str
+    decoded = T._decode_zero_width_tag(zero_str)
+    assert decoded == tag_hash
+
+
+def test_recipient_watermark_in_dispatch(work, pdf):
+    recipient = "leakcheck@example.com"
+    zero_str, tag_hash = T._encode_zero_width_tag(recipient)
+    watermark_text = f"Confidential • Dispatched to {recipient} [ID: {tag_hash}]"
+    dest = T._dispatch_protect_pdf(
+        work, pdf, "TestPassword123!", "OwnerPass!",
+        watermark_text=watermark_text
+    )
+    doc = fitz.open(dest)
+    doc.authenticate("TestPassword123!")
+    txt = "\n".join(p.get_text() for p in doc)
+    assert "leakcheck@example.com" in txt
+    assert tag_hash in txt
+    doc.close()
+
+
 def test_extract_fonts_reports_when_none_embedded(work, pdf):
     # The fixtures use base-14 fonts (helv), which are not embedded, so this
     # should raise cleanly rather than produce an empty archive.

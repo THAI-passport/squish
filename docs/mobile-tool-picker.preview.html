@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Squish mobile tool picker — state preview</title>
+<style>
+/* Hallmark · component: grouped-mobile-tool-picker-preview · genre: modern-minimal · theme: Squish warm-paper cobalt
+ * states: default · hover · focus · active · disabled · loading · error · success
+ * contrast: pass
+ */
+:root{
+  --color-paper:#f7f6f3;--color-paper-2:#efeee9;--color-panel:#fff;--color-ink:#1b1d23;
+  --color-ink-muted:#5c6070;--color-rule-2:#d4d1c8;--color-accent:#2f5fd8;
+  --color-accent-wash:color-mix(in srgb,var(--color-accent) 8%,transparent);
+  --color-ok-solid:#157f43;--color-err:#d64545;
+  --font-body:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+  --font-mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  --shadow-sm:0 1px 2px rgba(27,29,35,.06);
+}
+*{box-sizing:border-box}html,body{overflow-x:clip}body{margin:0;padding:24px 16px;background:var(--color-paper);color:var(--color-ink);font-family:var(--font-body)}
+main{width:min(100%,420px);margin:auto}h1{font-size:20px;margin:0 0 18px}.states{display:grid;gap:12px}.state{display:grid;grid-template-columns:72px minmax(0,1fr);align-items:center;gap:10px}.state>span{color:var(--color-ink-muted);font:11px var(--font-mono)}
+.trigger{width:100%;min-height:52px;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:11px;padding:7px 10px;border:1px solid var(--color-rule-2);border-radius:10px;background:var(--color-panel);color:var(--color-ink);font:inherit;text-align:start;box-shadow:var(--shadow-sm)}
+.trigger:hover,.trigger.is-hover{background:var(--color-paper-2)}.trigger:focus-visible,.trigger.is-focus{outline:2px solid var(--color-accent);outline-offset:2px}.trigger:active,.trigger.is-active{transform:translateY(1px);background:var(--color-paper-2)}.trigger[aria-disabled=true]{opacity:.55;cursor:not-allowed}.trigger[data-state=loading] .dot{background:var(--color-accent);animation:pulse 1s ease-in-out infinite alternate}.trigger[data-state=error]{border-color:var(--color-err)}.trigger[data-state=success] .dot{background:var(--color-ok-solid)}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--color-ink-muted);box-shadow:0 0 0 4px var(--color-paper-2)}.copy{min-width:0;display:flex;flex-direction:column}.copy small{overflow:hidden;color:var(--color-ink-muted);font:10px/1.3 var(--font-mono);text-transform:uppercase;text-overflow:ellipsis;white-space:nowrap}.copy strong{overflow:hidden;font-size:14px;text-overflow:ellipsis;white-space:nowrap}.chev{font-size:18px;color:var(--color-ink-muted)}@keyframes pulse{from{opacity:.42;transform:scale(.78)}to{opacity:1;transform:scale(1)}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Mobile tool picker — eight states</h1>
+  <div class="states">
+    <div class="state"><span>default</span><button class="trigger"><i class="dot"></i><span class="copy"><small>7 groups · 39 tools</small><strong>Choose a feature</strong></span><b class="chev">⌄</b></button></div>
+    <div class="state"><span>hover</span><button class="trigger is-hover"><i class="dot"></i><span class="copy"><small>7 groups · 39 tools</small><strong>Choose a feature</strong></span><b class="chev">⌄</b></button></div>
+    <div class="state"><span>focus</span><button class="trigger is-focus"><i class="dot"></i><span class="copy"><small>7 groups · 39 tools</small><strong>Choose a feature</strong></span><b class="chev">⌄</b></button></div>
+    <div class="state"><span>active</span><button class="trigger is-active"><i class="dot"></i><span class="copy"><small>Organize</small><strong>Merge PDF</strong></span><b class="chev">⌃</b></button></div>
+    <div class="state"><span>disabled</span><button class="trigger" aria-disabled="true"><i class="dot"></i><span class="copy"><small>Feature menu</small><strong>No tools available</strong></span><b class="chev">⌄</b></button></div>
+    <div class="state"><span>loading</span><button class="trigger" data-state="loading"><i class="dot"></i><span class="copy"><small>Feature menu</small><strong>Loading tools…</strong></span><b class="chev">⌄</b></button></div>
+    <div class="state"><span>error</span><button class="trigger" data-state="error"><i class="dot"></i><span class="copy"><small>Menu unavailable</small><strong>Tools could not be loaded</strong></span><b class="chev">⌄</b></button></div>
+    <div class="state"><span>success</span><button class="trigger" data-state="success"><i class="dot"></i><span class="copy"><small>Security</small><strong>Protect PDF</strong></span><b class="chev">⌄</b></button></div>
+  </div>
+</main>
+</body>
+</html>

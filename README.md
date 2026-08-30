@@ -26,7 +26,7 @@ kubectl apply -f k8s/squish.yaml
 | Convert to PDF (3) | image to PDF, Office to PDF, **Markdown to PDF** |
 | Convert from PDF (10) | image, Word, Excel, PowerPoint, PDF/A, Markdown, text, extract images, extract fonts, extract attachments |
 | Edit (6) | watermark, page numbers, header/footer, crop, flatten, metadata |
-| Security (9) | protect, secure email dispatch, unlock, redact, auto-redact, rasterise, sign, verify signature, compare |
+| Security (9) | protect, secure email dispatch (bursting, bundles, templates, OOB keys, native signing), unlock, redact, auto-redact, rasterise, sign, verify signature, compare |
 
 The UI is a single HTML file with no build step, no CDN and no external
 requests. The tool grid, the option inputs and the client-side validation are
@@ -100,9 +100,15 @@ socket API while continuing to serve the static assets through `env.ASSETS`.
 
 The Pages build supports 33 of 39 tools. Compress, repair, grayscale and
 Markdown-to-PDF use honest browser-specific fallbacks. Secure Email Dispatch
-encrypts the PDF in the browser before sending it to the Worker and requires
-the user's SMTP account on port 465 or 587. OCR, Office-to-PDF, PDF-to-Word,
-PDF/A, signing and signature verification still require the container build.
+encrypts each PDF in the browser before sending it to the Worker, requires the
+user's SMTP account on port 465 or 587, and supports isolated page bursting,
+up to 10 independently encrypted attachments, sanitized email templates, and
+on-demand OOB password sharing.
+Encrypted `.squishvault` export/import carries Browser Vault profiles, custom
+templates, and dispatch history between devices. Certificate signing remains
+native-server-only because the pyHanko crypto stack is not browser/WASM safe.
+OCR, Office-to-PDF, PDF-to-Word, PDF/A, signing and signature verification
+still require the container build.
 
 ```bash
 cd backend

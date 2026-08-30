@@ -47,7 +47,7 @@ log = logging.getLogger("uvicorn.error")
 
 APP_TITLE = "Squish"
 # run-local.sh greps for the "-squish" marker to prove new code is running.
-APP_VERSION = "1.5.0-squish"
+APP_VERSION = "1.7.0-squish"
 
 # ---------------------------------------------------------------- config ---
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "200"))
@@ -84,7 +84,7 @@ sem = asyncio.Semaphore(MAX_CONCURRENCY)
 @app.middleware("http")
 async def guard(request: Request, call_next):
     path = request.url.path
-    if API_KEY and path.startswith("/api") and path != "/api/health":
+    if API_KEY and path.startswith("/api") and path not in {"/api/health", "/api/runtime"}:
         given = request.headers.get("x-api-key") or request.query_params.get("key")
         if given != API_KEY:
             return JSONResponse({"detail": "invalid or missing API key"}, 401)
@@ -121,6 +121,26 @@ async def health():
         "max_concurrency": MAX_CONCURRENCY,
         "api_key": bool(API_KEY),
         "engines": engines(),
+    }
+
+
+@app.get("/api/runtime")
+async def runtime_mode():
+    """Tell the shared UI which security model this deployment uses.
+
+    Local/self-hosted Squish never redirects to Google. Its credential vault
+    remains browser-local and is unlocked only with the user's master PIN.
+    """
+    return {
+        "mode": "local",
+        "auth": {
+            "provider": "none",
+            "required_for_vault": False,
+            "configured": True,
+            "authenticated": True,
+        },
+        "vault": {"mode": "browser-pin", "configured": True},
+        "user": None,
     }
 
 

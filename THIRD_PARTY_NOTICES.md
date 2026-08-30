@@ -66,6 +66,7 @@ those licenses; they remain independently licensed as listed.
 | Component | License | Notes |
 |---|---|---|
 | pdf.js | Apache-2.0 | © Mozilla — thumbnails / page picker; served from `/static/vendor/` — https://github.com/mozilla/pdf.js |
+| qrcode-generator 1.4.4 | MIT | © 2009 Kazuhiko Arase — local OOB password QR rendering; served from `/static/vendor/` — https://github.com/kazuhikoarase/qrcode-generator |
 
 ---
 

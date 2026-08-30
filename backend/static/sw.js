@@ -8,8 +8,8 @@
 //   * other static GETs   -> stale-while-revalidate (fast, but self-updating)
 //   * /api/* and /vendor/ -> always network (never cached)
 // and every deploy bumps CACHE so old entries are dropped on activate.
-const CACHE = 'squish-v11';
-const FALLBACK = ['/', '/index.html', '/favicon.svg', '/manifest.json', '/vault.js'];
+const CACHE = 'squish-v13';
+const FALLBACK = ['/', '/index.html', '/favicon.svg', '/manifest.json', '/vault.js', '/vendor/qrcode-generator.js'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FALLBACK)).then(() => self.skipWaiting()));
@@ -28,10 +28,12 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const req = e.request;
   const url = new URL(req.url);
-  // Never touch API calls, and never cache the vendored pdf.js (large, and the
-  // network copy is authoritative).
+  // Never touch API calls. Large vendored engines stay network-authoritative;
+  // the small local QR renderer is explicitly cached for offline OOB use.
   if (req.method !== 'GET' || url.pathname.startsWith('/api/') ||
-      (url.pathname.startsWith('/vendor/') && !url.pathname.startsWith('/vendor/pyodide/'))) return;
+      (url.pathname.startsWith('/vendor/') &&
+       !url.pathname.startsWith('/vendor/pyodide/') &&
+       url.pathname !== '/vendor/qrcode-generator.js')) return;
 
   // HTML / navigations: network-first so a new deploy is picked up immediately;
   // fall back to cache only when offline.

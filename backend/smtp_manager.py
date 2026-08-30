@@ -16,7 +16,10 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formatdate, make_msgid, parseaddr
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
+
+MAX_ATTACHMENTS = 10
+MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024
 
 # ------------------------------------------------------------ sanitizers ---
 # Email headers are newline-delimited (RFC 5322). Any \r or \n coming from a
@@ -180,6 +183,25 @@ def _build_email2(
     return msg2
 
 
+def _normalise_pdf_paths(pdf_path: Path | Iterable[Path]) -> list[Path]:
+    """Accept the legacy single path and the new attachment list contract."""
+    if isinstance(pdf_path, Path):
+        paths = [pdf_path]
+    else:
+        paths = [Path(p) for p in pdf_path]
+    if not paths:
+        raise ValueError("At least one encrypted PDF attachment is required")
+    if len(paths) > MAX_ATTACHMENTS:
+        raise ValueError(f"A maximum of {MAX_ATTACHMENTS} PDF attachments is allowed")
+    missing = [p.name for p in paths if not p.is_file()]
+    if missing:
+        raise ValueError(f"Encrypted attachment not found: {', '.join(missing)}")
+    total_bytes = sum(p.stat().st_size for p in paths)
+    if total_bytes > MAX_TOTAL_ATTACHMENT_BYTES:
+        raise ValueError("Encrypted PDF attachments exceed the 12 MB combined limit")
+    return paths
+
+
 def send_key_notification(
     smtp: Dict[str, Any],
     recipient: str,
@@ -216,9 +238,9 @@ def send_key_notification(
 
 
 def send_dual_secure_email(
-    smtp: Dict[str, Any],
+    smtp: Dict[str, Any] | list[Dict[str, Any]],
     recipient: str,
-    pdf_path: Path,
+    pdf_path: Path | Iterable[Path],
     password: str,
     subject: Optional[str] = None,
     html_body: Optional[str] = None,
@@ -226,124 +248,178 @@ def send_dual_secure_email(
     email2_body: Optional[str] = None,
     delay_seconds: float = 2.5,
     thread_emails: bool = False,
+    key_delivery_mode: str = "email",
+    plain_text_only: bool = False,
+    max_retries_per_relay: int = 2,
 ) -> Dict[str, Any]:
-    """Sends Email #1 with protected PDF, then waits and sends Email #2 with password.
+    """Send encrypted PDFs and optionally deliver their password by email with multi-relay fallback.
 
-    Email #1 failing (bad host/auth/etc.) raises -- nothing was delivered.
-    Email #2 failing *after* Email #1 succeeded does NOT raise: the recipient
-    already has the encrypted PDF sitting in their inbox with no password
-    coming, so silently turning that into a generic exception would hide a
-    state the caller needs to know about and act on (e.g. offer a resend).
-    Instead this returns a dict with `partial: True` and enough context to
-    retry just the key email via `send_key_notification`.
+    Supports single SMTP config or prioritized multi-relay pool.
     """
+    import random
+
     recipient = validate_recipient_email(recipient)
-    from_name = sanitize_header_value(smtp.get("from_name") or "")
-    username = smtp.get("username")
-    sender = sanitize_header_value(username or smtp.get("sender") or "noreply@squish.local")
-    from_header = f'"{from_name}" <{sender}>' if from_name else sender
-    pdf_filename = sanitize_filename_header(pdf_path.name)
+    pdf_paths = _normalise_pdf_paths(pdf_path)
+    mode = str(key_delivery_mode or "email").lower()
+    if mode not in {"email", "oob", "dual"}:
+        raise ValueError("key_delivery_mode must be email, oob, or dual")
+
+    pool: list[Dict[str, Any]] = smtp if isinstance(smtp, list) else [smtp]
+    if not pool or not any(p.get("server") or p.get("host") for p in pool):
+        raise ValueError("At least one valid SMTP profile is required")
+
+    pdf_filenames = [sanitize_filename_header(path.name) for path in pdf_paths]
+    pdf_filename = pdf_filenames[0]
+    attachment_label = pdf_filename if len(pdf_filenames) == 1 else f"{len(pdf_filenames)} encrypted PDF files"
     subject = sanitize_header_value(subject) if subject else None
     email2_subject = sanitize_header_value(email2_subject) if email2_subject else None
 
-    if not recipient:
-        raise ValueError("Recipient email is required")
+    last_exc = None
+    total_retries = 0
 
-    server = _connect(smtp, timeout=20)
+    for pool_idx, current_smtp in enumerate(pool):
+        from_name = sanitize_header_value(current_smtp.get("from_name") or "")
+        username = current_smtp.get("username")
+        sender = sanitize_header_value(username or current_smtp.get("sender") or "noreply@squish.local")
+        from_header = f'"{from_name}" <{sender}>' if from_name else sender
+        relay_host = current_smtp.get("server") or current_smtp.get("host") or "smtp"
 
-    try:
-        # ------------------------------------------------------------- EMAIL 1 ---
-        msg1 = MIMEMultipart("mixed")
-        msg1["From"] = from_header
-        msg1["To"] = recipient
-        msg1["Subject"] = sanitize_header_value(
-            f"[Secure Document] {subject}" if subject else f"[Secure Document] Attached: {pdf_filename}"
-        )
-        msg1["Date"] = formatdate(localtime=True)
-        msg1_id = make_msgid(domain=sender.split("@")[-1] if "@" in sender else None)
-        msg1["Message-ID"] = msg1_id
+        for attempt in range(max_retries_per_relay + 1):
+            server = None
+            step1_sent = False
+            try:
+                server = _connect(current_smtp, timeout=20)
 
-        alt1 = MIMEMultipart("alternative")
-        plain_text1 = (
-            f"You have received an encrypted PDF document: {pdf_filename}.\n\n"
-            "This file is password-protected for security. "
-            "The decryption password will be sent in a separate email shortly."
-        )
+                # ------------------------------------------------------------- EMAIL 1 ---
+                msg1 = MIMEMultipart("mixed")
+                msg1["From"] = from_header
+                msg1["To"] = recipient
+                msg1["Subject"] = sanitize_header_value(
+                    f"[Secure Document] {subject}" if subject else f"[Secure Document] Attached: {attachment_label}"
+                )
+                msg1["Date"] = formatdate(localtime=True)
+                msg1_id = make_msgid(domain=sender.split("@")[-1] if "@" in sender else None)
+                msg1["Message-ID"] = msg1_id
 
-        if html_body and ("<" in html_body and ">" in html_body):
-            html_text1 = html_body
-        elif html_body:
-            html_paragraphs = "".join(f"<p>{line}</p>" for line in html_body.split("\n") if line.strip())
-            html_text1 = _html_wrapper(
-                f'<h2 style="color: #1b1d23; margin-top: 0;">{subject or "Secure Document Attached"}</h2>'
-                f'{html_paragraphs}'
-                '<div style="background: #f7f6f3; padding: 14px 18px; border-radius: 6px; margin: 18px 0; border-left: 4px solid #2f5fd8;">'
-                f'<p style="margin: 0; color: #1b1d23; font-size: 14px;"><strong>Attached:</strong> {pdf_filename}</p>'
-                '<p style="margin: 4px 0 0; color: #5c6070; font-size: 13px;">This document is AES-256 encrypted. The decryption key will arrive in a separate email shortly.</p>'
-                '</div>'
-            )
-        else:
-            html_text1 = _html_wrapper(
-                '<h2 style="color: #1b1d23; margin-top: 0;">Secure Document Attached</h2>'
-                f'<p style="color: #33363f; line-height: 1.5;">You have received an encrypted PDF document: '
-                f'<strong>{pdf_filename}</strong>.</p>'
-                '<div style="background: #f7f6f3; padding: 14px 18px; border-radius: 6px; margin: 18px 0; border-left: 4px solid #2f5fd8;">'
-                '<p style="margin: 0; color: #1b1d23; font-size: 14px;"><strong>Note:</strong> '
-                'This document is password-protected for your security. '
-                'The decryption key is being transmitted in a separate message shortly.</p>'
-                '</div>'
-                '<p style="color: #5c6070; font-size: 13px;">Dispatched via Squish Secure Dispatch.</p>'
-            )
+                alt1 = MIMEMultipart("alternative")
+                delivery_note = (
+                    "The decryption password will be delivered through a separate channel."
+                    if mode == "oob"
+                    else "The decryption password will be sent in a separate email shortly."
+                )
+                plain_text1 = html_body if plain_text_only and html_body else (
+                    f"You have received {attachment_label}.\n\n"
+                    f"The attached files are password-protected for security. {delivery_note}"
+                )
 
-        alt1.attach(MIMEText(plain_text1, "plain", "utf-8"))
-        alt1.attach(MIMEText(html_text1, "html", "utf-8"))
-        msg1.attach(alt1)
+                if html_body and ("<" in html_body and ">" in html_body):
+                    html_text1 = html_body
+                elif html_body:
+                    html_paragraphs = "".join(f"<p>{line}</p>" for line in html_body.split("\n") if line.strip())
+                    html_text1 = _html_wrapper(
+                        f'<h2 style="color: #1b1d23; margin-top: 0;">{subject or "Secure Document Attached"}</h2>'
+                        f'{html_paragraphs}'
+                        '<div style="background: #f7f6f3; padding: 14px 18px; border-radius: 6px; margin: 18px 0; border-left: 4px solid #2f5fd8;">'
+                        f'<p style="margin: 0; color: #1b1d23; font-size: 14px;"><strong>Attached:</strong> {attachment_label}</p>'
+                        f'<p style="margin: 4px 0 0; color: #5c6070; font-size: 13px;">{delivery_note}</p>'
+                        '</div>'
+                    )
+                else:
+                    html_text1 = _html_wrapper(
+                        '<h2 style="color: #1b1d23; margin-top: 0;">Secure Document Attached</h2>'
+                        f'<p style="color: #33363f; line-height: 1.5;">You have received '
+                        f'<strong>{attachment_label}</strong>.</p>'
+                        '<div style="background: #f7f6f3; padding: 14px 18px; border-radius: 6px; margin: 18px 0; border-left: 4px solid #2f5fd8;">'
+                        '<p style="margin: 0; color: #1b1d23; font-size: 14px;"><strong>Note:</strong> '
+                        f'The attached files are password-protected for your security. {delivery_note}</p>'
+                        '</div>'
+                        '<p style="color: #5c6070; font-size: 13px;">Dispatched via Squish Secure Dispatch.</p>'
+                    )
 
-        with pdf_path.open("rb") as f:
-            pdf_part = MIMEApplication(f.read(), _subtype="pdf")
-            pdf_part.add_header("Content-Disposition", "attachment", filename=pdf_filename)
-            msg1.attach(pdf_part)
+                if plain_text_only:
+                    msg1.attach(MIMEText(plain_text1, "plain", "utf-8"))
+                else:
+                    alt1.attach(MIMEText(plain_text1, "plain", "utf-8"))
+                    alt1.attach(MIMEText(html_text1, "html", "utf-8"))
+                    msg1.attach(alt1)
 
-        server.sendmail(sender, [recipient], msg1.as_string())
-        step1_sent = True
+                for path, filename in zip(pdf_paths, pdf_filenames):
+                    with path.open("rb") as f:
+                        pdf_part = MIMEApplication(f.read(), _subtype="pdf")
+                    pdf_part.add_header("Content-Disposition", "attachment", filename=filename)
+                    msg1.attach(pdf_part)
 
-        # ------------------------------------------------------------- DELAY ---
-        time.sleep(max(0.5, float(delay_seconds)))
+                server.sendmail(sender, [recipient], msg1.as_string())
+                step1_sent = True
 
-        # ------------------------------------------------------------- EMAIL 2 ---
-        msg2 = _build_email2(
-            from_header, recipient, pdf_filename, password, subject, email2_subject, email2_body,
-            in_reply_to=msg1_id if thread_emails else None
-        )
-        server.sendmail(sender, [recipient], msg2.as_string())
+                if mode in {"email", "dual"}:
+                    # --------------------------------------------------------- DELAY ---
+                    time.sleep(max(0.5, float(delay_seconds)))
 
-        return {
-            "ok": True,
-            "partial": False,
-            "step1_sent": True,
-            "step2_sent": True,
-            "recipient": recipient,
-            "pdf_filename": pdf_filename,
-            "message": f"Successfully delivered dual secure emails to {recipient}"
-        }
-    except Exception as exc:
-        if locals().get('step1_sent'):
-            # The PDF is already in the recipient's inbox; only the key email
-            # failed. Report a partial success rather than a total failure.
-            return {
-                "ok": False,
-                "partial": True,
-                "step1_sent": True,
-                "step2_sent": False,
-                "recipient": recipient,
-                "pdf_filename": pdf_filename,
-                "error": str(exc),
-                "message": f"PDF delivered to {recipient}, but the password email failed: {exc}"
-            }
-        # Nothing was sent at all -- a genuine total failure.
-        raise
-    finally:
-        try:
-            server.quit()
-        except Exception:
-            pass
+                    # --------------------------------------------------------- EMAIL 2 ---
+                    msg2 = _build_email2(
+                        from_header, recipient, attachment_label, password, subject,
+                        email2_subject, email2_body,
+                        in_reply_to=msg1_id if thread_emails else None
+                    )
+                    server.sendmail(sender, [recipient], msg2.as_string())
+
+                relay_label = relay_host if pool_idx == 0 else f"{relay_host} (fallback from {pool[0].get('server', 'primary')})"
+                return {
+                    "ok": True,
+                    "partial": False,
+                    "step1_sent": True,
+                    "step2_sent": mode in {"email", "dual"},
+                    "recipient": recipient,
+                    "pdf_filename": pdf_filename,
+                    "attachments": pdf_filenames,
+                    "key_delivery_mode": mode,
+                    "oob_required": mode in {"oob", "dual"},
+                    "relay_used": relay_label,
+                    "retries": total_retries,
+                    "message": (
+                        f"Successfully delivered encrypted attachments to {recipient}; "
+                        "password awaits out-of-band delivery"
+                        if mode == "oob"
+                        else f"Successfully delivered secure email to {recipient}"
+                    )
+                }
+            except Exception as exc:
+                last_exc = exc
+                if step1_sent:
+                    # PDF was sent; password email failed. Return partial status.
+                    return {
+                        "ok": False,
+                        "partial": True,
+                        "step1_sent": True,
+                        "step2_sent": False,
+                        "recipient": recipient,
+                        "pdf_filename": pdf_filename,
+                        "attachments": pdf_filenames,
+                        "key_delivery_mode": mode,
+                        "relay_used": relay_host,
+                        "retries": total_retries,
+                        "error": str(exc),
+                        "message": f"PDF delivered to {recipient}, but the password email failed: {exc}"
+                    }
+                # Check if transient error eligible for retry on same relay
+                is_transient = isinstance(exc, (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError, TimeoutError)) or (
+                    isinstance(exc, smtplib.SMTPResponseException) and exc.smtp_code in (421, 450, 451)
+                )
+                if is_transient and attempt < max_retries_per_relay:
+                    total_retries += 1
+                    time.sleep(random.uniform(1.0, 2.5))
+                    continue
+                # Relay failed; break retry loop to try next relay in pool
+                break
+            finally:
+                if server is not None:
+                    try:
+                        server.quit()
+                    except Exception:
+                        pass
+
+    # If we reached here, all relays in pool failed
+    if last_exc:
+        raise last_exc
+    raise ValueError("All configured SMTP relays failed to send")

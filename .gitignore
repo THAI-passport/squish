@@ -45,3 +45,6 @@ backend/tools.json
 # Local overrides
 .env
 docker-compose.override.yml
+.wrangler/
+scratch*.pdf
+.hallmark/
