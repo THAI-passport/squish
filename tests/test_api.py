@@ -156,6 +156,67 @@ def test_api_key_accepts_the_header(client, pdf, monkeypatch):
     assert r.status_code == 200
 
 
+def test_api_key_is_not_accepted_in_query_string(client, monkeypatch):
+    monkeypatch.setattr(A, "API_KEY", "sekrit")
+    assert client.get("/api/tools?key=sekrit").status_code == 401
+
+
+def test_cross_origin_state_change_is_rejected(client):
+    r = client.post(
+        "/api/t/split",
+        headers={"Origin": "https://attacker.example", "Sec-Fetch-Site": "cross-site"},
+    )
+    assert r.status_code == 403
+    assert "cross-origin" in r.json()["detail"]
+
+
+def test_same_origin_state_change_reaches_handler(client):
+    r = client.post(
+        "/api/t/split",
+        headers={"Origin": "http://testserver", "Sec-Fetch-Site": "same-origin"},
+    )
+    assert r.status_code == 400
+    assert r.json()["detail"] == "no files uploaded"
+
+
+def test_sensitive_smtp_routes_require_configured_api_key(client, monkeypatch):
+    monkeypatch.setattr(A, "API_KEY", None)
+    assert client.post("/api/smtp/test", json={}).status_code == 403
+    assert client.post("/api/smtp/resend-key", json={}).status_code == 403
+    assert client.post("/api/t/email-secure").status_code == 403
+
+
+def test_smtp_test_returns_structured_safe_diagnostic(client, monkeypatch):
+    import smtp_manager
+
+    monkeypatch.setattr(A, "API_KEY", "test-api-key")
+    monkeypatch.setattr(smtp_manager, "test_smtp_connection", lambda _config: {
+        "ok": False,
+        "stage": "authentication",
+        "category": "credentials_rejected",
+        "smtp_code": 535,
+        "error": "The SMTP server rejected the username or password.",
+        "hint": "Confirm the authentication username and account policy.",
+        "relay_response": "5.7.8 Authentication rejected",
+        "diagnostic_id": "a1b2c3d4",
+    })
+    response = client.post(
+        "/api/smtp/test",
+        headers={"X-API-Key": "test-api-key"},
+        json={"smtp": {
+            "server": "smtp.example.com", "port": 587,
+            "username": "sender@example.com", "password": "must-not-leak",
+            "security": "starttls",
+        }},
+    )
+    body = response.json()
+    assert response.status_code == 400
+    assert body["stage"] == "authentication"
+    assert body["smtp_code"] == 535
+    assert body["diagnostic_id"] == "a1b2c3d4"
+    assert "must-not-leak" not in response.text
+
+
 # --------------------------------------------------------------- metrics ---
 
 def test_metrics_counts_jobs(client, pdf):
@@ -170,6 +231,12 @@ def test_metrics_records_failures_separately(client, pdf):
     client.post("/api/t/split", data={"pages": "500"},
                 files={"files": ("s.pdf", pdf.read_bytes(), "application/pdf")})
     assert 'outcome="rejected"' in client.get("/metrics").text
+
+
+def test_metrics_uses_api_key_when_configured(client, monkeypatch):
+    monkeypatch.setattr(A, "API_KEY", "sekrit")
+    assert client.get("/metrics").status_code == 401
+    assert client.get("/metrics", headers={"X-API-Key": "sekrit"}).status_code == 200
 
 
 # ------------------------------------------------------------ filenames ---

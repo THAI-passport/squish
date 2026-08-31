@@ -30,6 +30,21 @@ BACKEND = Path(__file__).resolve().parents[1] / "backend"
 NON_WASM_MODULES = {"weasyprint", "pdf2docx", "pyhanko", "ocrmypdf", "smtp_manager"}
 
 
+def test_smtp_diagnostics_are_wired_in_both_deployment_modes_and_ui():
+    python_smtp = (BACKEND / "smtp_manager.py").read_text(encoding="utf-8")
+    worker = (BACKEND / "static" / "squish-email-worker.js").read_text(encoding="utf-8")
+    ui = (BACKEND / "static" / "index.html").read_text(encoding="utf-8")
+
+    for source in (python_smtp, worker):
+        assert "credentials_rejected" in source
+        assert "auth_not_supported" in source
+        assert "diagnostic_id" in source
+        assert "relay_response" in source
+    assert "function renderSmtpDiagnostic" in ui
+    assert "Technical details" in ui
+    assert "textContent = fields.map" in ui  # relay text must not be inserted as HTML
+
+
 def _unsupported_map() -> dict[str, str]:
     """Extract the literal `unsupported` dict from generate_client_tools.py
     without executing it."""
@@ -51,6 +66,17 @@ def _static_fn_overrides() -> dict[str, str]:
                    for t in node.targets):
                 return ast.literal_eval(node.value)
     return {}
+
+
+def _static_worker_handlers() -> set[str]:
+    """Read tools implemented directly by the browser processing worker."""
+    tree = ast.parse((BACKEND / "generate_client_tools.py").read_text())
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            if any(isinstance(t, ast.Name) and t.id == "static_worker_handlers"
+                   for t in node.targets):
+                return ast.literal_eval(node.value)
+    return set()
 
 
 def _function_graph() -> tuple[dict[str, bool], dict[str, set[str]]]:
@@ -102,6 +128,7 @@ def test_every_native_tool_is_blocklisted():
 
     unsupported = _unsupported_map()
     overrides = _static_fn_overrides()
+    worker_handlers = _static_worker_handlers()
     closure, _ = _function_graph()
 
     unblocked = {
@@ -109,6 +136,7 @@ def test_every_native_tool_is_blocklisted():
         for t in tools.TOOLS
         if closure.get(overrides.get(t.key, t.fn.__name__), False)
         and t.key not in unsupported
+        and t.key not in worker_handlers
     }
     assert not unblocked, (
         "these tools shell out or import non-wasm packages but are missing "
@@ -139,6 +167,17 @@ def test_static_function_overrides_are_real_and_wasm_safe():
     assert not missing, f"static override functions do not exist: {missing}"
     native = {key: fn for key, fn in overrides.items() if closure.get(fn, False)}
     assert not native, f"static overrides still need native engines: {native}"
+
+
+def test_static_worker_handlers_are_explicit_and_real():
+    import tools
+
+    handlers = _static_worker_handlers()
+    registry_keys = {t.key for t in tools.TOOLS}
+    assert handlers <= registry_keys
+    template = (BACKEND / "client_tools_worker.template.js").read_text()
+    missing = {key for key in handlers if f"key === '{key}'" not in template}
+    assert not missing, f"static worker handlers have no dispatch branch: {missing}"
 
 
 def test_blocklist_only_covers_native_tools():

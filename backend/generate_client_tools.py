@@ -35,12 +35,11 @@ unsupported = {
     # -- shell out to a native binary (no subprocess in Pyodide) --
     "pdf-to-pdfa":      "Ghostscript",   # gs
     "office-to-pdf":    "LibreOffice",   # soffice
-    "ocr":              "OCR engine",    # ocrmypdf + tesseract
     "pdf-to-word":      "pdf2docx",      # native deps, not wasm-safe
     # -- import a package with no usable wasm build --
     "sign-pdf":         "pyhanko",       # crypto stack, not Pyodide-installable
     "verify-signature": "pyhanko",
-    # Enabled dynamically only when the Cloudflare Pages Worker answers its
+    # Enabled dynamically only when the Cloudflare Worker answers its
     # capability probe. Plain static hosts keep showing this as unavailable.
     "email-secure":     "Cloudflare email worker",
 }
@@ -55,11 +54,17 @@ static_fn_overrides = {
     "md-to-pdf": "md_to_pdf_wasm",
 }
 
+# Native registry entries that are replaced by a non-Python implementation in
+# client_tools_worker.template.js. Unlike static_fn_overrides, these handlers
+# deliberately bypass tools.py entirely.
+static_worker_handlers = {"ocr"}
+
 static_blurb_overrides = {
     "compress": "Clean, deduplicate and deflate PDF objects without uploading the file.",
     "repair": "Best-effort recovery of damaged PDF structure, entirely in your browser.",
     "grayscale": "Rebuild pages in grayscale for cheaper printing (browser mode rasterises pages).",
     "md-to-pdf": "Render Markdown to PDF locally with browser-safe page layout.",
+    "ocr": "Recognise scans in a background WASM worker and add an invisible searchable text layer without uploading the PDF.",
 }
 
 # Two shapes are built from one pass over the registry:
@@ -102,9 +107,6 @@ except OSError:
 with open(os.path.join(os.path.dirname(__file__), 'tools.py'), 'r') as f:
     tools_py_content = f.read()
 
-# Escape backticks and dollars for JS template literal
-tools_py_content = tools_py_content.replace('\\', '\\\\').replace('`', '\\`').replace('$', '\\$')
-
 js_content = f"""
 // Auto-generated client_tools.js for static WASM fallback
 const STATIC_TOOLS = {tools_json};
@@ -112,194 +114,95 @@ const STATIC_VERSION = "{app_version}";
 window.STATIC_VERSION = STATIC_VERSION;
 const STATIC_FN_OVERRIDES = {json.dumps(static_fn_overrides, separators=(',', ':'))};
 
-const TOOLS_PY_SOURCE = `{tools_py_content}`;
+// All Python/WASM work runs off the UI thread. Files are structured-cloned as
+// Blob handles, then staged to OPFS inside the worker without a whole-file JS
+// ArrayBuffer on the main thread.
+let processingWorker = null;
+let processingSequence = 0;
+const processingJobs = new Map();
+let tesseractModule = null;
+let tesseractWorker = null;
+let tesseractLanguage = '';
 
-// Pyodide Runner Logic
-let pyodide = null;
-let pyodideReadyPromise = null;
-const optionalPackagePromises = {{}};
-
-async function initPyodide() {{
-  if (!pyodideReadyPromise) {{
-    pyodideReadyPromise = (async () => {{
-      const msg = document.getElementById('fileStatus');
-      if(msg) msg.textContent = 'Loading Pyodide engine... (~20MB)';
-
-      const script = document.createElement('script');
-      script.src = '/vendor/pyodide/pyodide.js';
-      document.head.append(script);
-
-      await new Promise((resolve) => script.onload = resolve);
-
-      pyodide = await loadPyodide();
-
-      if(msg) msg.textContent = 'Installing packages...';
-      await pyodide.loadPackage('micropip');
-      const micropip = pyodide.pyimport('micropip');
-
-      // Core engine — every PyMuPDF-backed tool needs this. If it fails, the
-      // whole static mode is dead, so surface it and stop.
-      try {{
-        await micropip.install(['/vendor/pyodide/pymupdf-1.27.2.2-cp314-abi3-pyemscripten_2026_0_wasm32.whl', '/vendor/pyodide/markdown-3.10.3-py3-none-any.whl', '/vendor/pyodide/pygments-2.20.0-py3-none-any.whl']);
-      }} catch (e) {{
-        console.error("Core engine packages failed to install", e);
-        if(msg) msg.textContent = 'Engine failed to load — check your connection and reload.';
-        throw e;
-      }}
-      // Write tools.py to virtual file system
-      pyodide.FS.writeFile('/home/pyodide/tools.py', TOOLS_PY_SOURCE);
-
-      // Add /home/pyodide to sys.path and import
-      pyodide.runPython(`
-import sys
-import os
-sys.path.insert(0, '/home/pyodide')
-
-# Constrain resource budgets for the browser BEFORE importing tools, since
-# tools.py reads these into module-level constants at import time.
-# NOTE: the names must match tools.py exactly — MAX_PAGES and MAX_RENDER_MP.
-# (An earlier version set MAX_MEGAPIXELS, which tools.py never reads, so the
-# render budget silently stayed at the 4000 MP server default and could OOM
-# the tab.)
-os.environ["MAX_PAGES"] = "100"
-os.environ["MAX_RENDER_MP"] = "300"
-
-import tools
-from pathlib import Path
-import json
-
-def run_tool_wrapper(key, files_json, params_json):
-    work_dir = Path("/tmp/squish_work")
-    work_dir.mkdir(parents=True, exist_ok=True)
-
-    files = json.loads(files_json)
-    params = json.loads(params_json)
-
-    input_paths = []
-    for f in files:
-        p = work_dir / f
-        input_paths.append(p)
-
-    # Internal-only secure bursting path. Unlike the ordinary Split tool,
-    # this creates a fresh document tree and scrubs catalog metadata, links,
-    # annotations, forms, JavaScript and embedded files before encryption.
-    if key == "__dispatch-extract":
-        out_path = tools._dispatch_extract_pages(
-            work_dir, input_paths[0], params.get("pages", ""),
-            params.get("pdf_open_password", ""))
-        with open(out_path, 'rb') as f:
-            data = f.read()
-        return {{'name': out_path.name, 'mime': 'application/pdf', 'data': data}}
-
-    # Find tool
-    tool = next(t for t in tools.TOOLS if t.key == key)
-    fn_name = json.loads(params.pop("__static_fn_overrides", "{{}}" )).get(key)
-    fn = getattr(tools, fn_name) if fn_name else tool.fn
-
-    # Run
-    result = fn(work_dir, input_paths, params)
-
-    # Read output
-    out_path = result.path
-    with open(out_path, 'rb') as f:
-        data = f.read()
-
-    return {{
-        'name': result.filename,
-        'mime': result.media_type,
-        'data': data
-    }}
-`);
-
-      if(msg) msg.textContent = 'Ready.';
-    }})();
-  }}
-  return pyodideReadyPromise;
-}}
-
-async function ensureOptionalPackage(key) {{
-  const packages = {{'pdf-to-excel': 'openpyxl', 'pdf-to-powerpoint': 'python-pptx'}};
-  const pkg = packages[key];
-  if (!pkg) return;
-  if (!optionalPackagePromises[key]) {{
-    optionalPackagePromises[key] = (async () => {{
-      const msg = document.getElementById('fileStatus');
-      if(msg) msg.textContent = `Loading optional ${{pkg}} package...`;
-      const micropip = pyodide.pyimport('micropip');
-      await micropip.install(pkg);
-    }})();
-  }}
-  return optionalPackagePromises[key];
-}}
-
-window.runPyodideTool = async function(key, files, formData) {{
-  await initPyodide();
-  await ensureOptionalPackage(key);
-  const msg = document.getElementById('fileStatus');
-  if(msg) msg.textContent = 'Processing locally...';
-
+async function recogniseOcrPage(message) {{
   try {{
-      // Write input files to virtual FS
-      pyodide.FS.mkdir('/tmp/squish_work');
-  }} catch(e) {{}}
-
-  const fileNames = [];
-  for(let i=0; i<files.length; i++) {{
-    let arrayBuffer;
-    try {{
-      arrayBuffer = await files[i].arrayBuffer();
-    }} catch(err) {{
-      arrayBuffer = await new Promise((resolve, reject) => {{
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(new Error('Could not read file: ' + (reader.error?.message || err.message)));
-        reader.readAsArrayBuffer(files[i]);
+    if (!tesseractModule) tesseractModule = await import('/vendor/tesseract/tesseract.esm.min.js');
+    if (!tesseractWorker || tesseractLanguage !== message.lang) {{
+      if (tesseractWorker) await tesseractWorker.terminate();
+      const status = document.getElementById('fileStatus');
+      if (status) status.textContent = `Loading ${{message.lang}} OCR model (cached after first use)…`;
+      const tesseract = tesseractModule.createWorker ? tesseractModule : tesseractModule.default;
+      tesseractWorker = await tesseract.createWorker(message.lang, 1, {{
+        workerPath:'/vendor/tesseract/worker.min.js',
+        corePath:'/vendor/tesseract/core',
+        langPath:'/vendor/tesseract/lang',
+        cachePath:'squish-ocr-v1',
+        workerBlobURL:false,
+        errorHandler:error => console.error('OCR worker error', error),
+        logger: update => {{
+          if (status && update.status && Number.isFinite(update.progress)) status.textContent = `${{update.status}} · ${{Math.round(update.progress * 100)}}%`;
+        }},
       }});
+      tesseractLanguage = message.lang;
     }}
-    const safeName = files[i].name.replace(/[^a-zA-Z0-9.-]/g, '_');
-    pyodide.FS.writeFile('/tmp/squish_work/' + safeName, new Uint8Array(arrayBuffer));
-    fileNames.push(safeName);
+    const result = await tesseractWorker.recognize(message.image, {{}}, {{text:false, blocks:false, tsv:true}});
+    processingWorker?.postMessage({{type:'ocr-result', requestId:message.requestId, tsv:result.data.tsv || ''}});
+  }} catch (error) {{
+    processingWorker?.postMessage({{type:'ocr-result', requestId:message.requestId, error:error instanceof Error ? error.message : String(error)}});
   }}
+}}
 
-  // Extract parameters from formData
+function ensureProcessingWorker() {{
+  if (processingWorker) return processingWorker;
+  processingWorker = new Worker('/client_tools_worker.js?v={app_version}', {{type:'module'}});
+  processingWorker.onmessage = event => {{
+    const message = event.data || {{}};
+    if (message.type === 'ocr-page') {{ recogniseOcrPage(message); return; }}
+    const job = processingJobs.get(message.id);
+    if (!job) return;
+    if (message.type === 'progress') {{
+      const status = document.getElementById('fileStatus');
+      if (status) status.textContent = message.message || 'Processing locally…';
+      return;
+    }}
+    if (message.type === 'result') {{
+      job.result = {{
+        blob:message.blob, name:message.name, storage:message.storage,
+        verifiedText:message.verifiedText || ''
+      }};
+      return;
+    }}
+    processingJobs.delete(message.id);
+    if (message.type === 'cleanup') job.resolve({{...job.result, cleaned:true}});
+    else job.reject(new Error(message.error || 'Local processing failed'));
+  }};
+  processingWorker.onerror = error => {{
+    for (const job of processingJobs.values()) job.reject(new Error(error.message || 'Browser worker stopped'));
+    processingJobs.clear();
+    processingWorker?.terminate();
+    processingWorker = null;
+  }};
+  return processingWorker;
+}}
+
+window.runPyodideTool = function(key, files, formData) {{
+  const id = `squish-${{Date.now()}}-${{++processingSequence}}`;
   const params = {{}};
-  for (let [k, v] of formData.entries()) {{
-    if (k !== 'files') {{
-      params[k] = v;
-    }}
-  }}
+  for (const [name, value] of formData.entries()) if (name !== 'files') params[name] = value;
   params.__static_fn_overrides = JSON.stringify(STATIC_FN_OVERRIDES);
+  return new Promise((resolve, reject) => {{
+    processingJobs.set(id, {{resolve, reject}});
+    ensureProcessingWorker().postMessage({{type:'run', id, key, files:Array.from(files), params}});
+  }});
+}};
 
-  // Convert dicts to JSON for safe passing to Python
-  const filesJson = JSON.stringify(fileNames);
-  const paramsJson = JSON.stringify(params);
-
-  try {{
-    // Call Python wrapper
-    const pyWrapper = pyodide.globals.get('run_tool_wrapper');
-    const pyResult = pyWrapper(key, filesJson, paramsJson);
-    const jsResult = pyResult.toJs({{dict_converter: Object.fromEntries}});
-    pyResult.destroy();
-
-    // Convert back to JS Blob
-    const uint8View = jsResult.data;
-    const blob = new Blob([uint8View], {{type: jsResult.mime || 'application/pdf'}});
-    const name = jsResult.name;
-
-    return {{ blob: blob, name: name }};
-  }} catch (e) {{
-    console.error(e);
-    throw new Error("Local processing failed: " + e.message);
-  }} finally {{
-    // Cleanup /tmp/squish_work/
-    // We try to clean up, if it fails it's just MEMFS memory leak.
-    try {{
-      pyodide.runPython(`
-import shutil
-shutil.rmtree('/tmp/squish_work', ignore_errors=True)
-`);
-    }} catch(e) {{}}
-  }}
+window.cancelLocalProcessing = function() {{
+  if (!processingWorker) return;
+  processingWorker.terminate();
+  processingWorker = null;
+  for (const job of processingJobs.values()) job.reject(new Error('Processing cancelled'));
+  processingJobs.clear();
+  if (tesseractWorker) {{ tesseractWorker.terminate(); tesseractWorker = null; tesseractLanguage = ''; }}
 }};
 
 function staticRandomSecret(bytes = 16) {{
@@ -378,6 +281,7 @@ window.runStaticSecureEmail = async function(files, formData) {{
       }});
     }}
   }}
+  const requestedKeyDeliveryMode = String(formData.get('key_delivery_mode') || 'email');
   const payload = {{
     smtp,
     recipient: String(formData.get('recipient_email') || ''),
@@ -392,7 +296,9 @@ window.runStaticSecureEmail = async function(files, formData) {{
     email2Subject: String(formData.get('email2_subject') || ''),
     email2Body: String(formData.get('email2_body') || ''),
     threadEmails: formData.get('thread_emails') === '1' || formData.get('thread_emails') === 'true',
-    keyDeliveryMode: String(formData.get('key_delivery_mode') || 'email')
+    // The link secret must never be sent to the SMTP Worker. Burner mode sends
+    // the encrypted PDF first, then creates the zero-knowledge link locally.
+    keyDeliveryMode: requestedKeyDeliveryMode === 'burner' ? 'oob' : requestedKeyDeliveryMode
   }};
 
   const response = await fetch('/api/t/email-secure', {{
@@ -404,6 +310,17 @@ window.runStaticSecureEmail = async function(files, formData) {{
   try {{ receipt = await response.json(); }} catch {{ throw new Error(`Email worker returned HTTP ${{response.status}}.`); }}
   if (!response.ok && receipt.status !== 'partial_failure') {{
     throw new Error(receipt.error || `Email worker returned HTTP ${{response.status}}.`);
+  }}
+  if (requestedKeyDeliveryMode === 'burner' && receipt.status !== 'partial_failure') {{
+    receipt.key_delivery_mode = 'burner';
+    try {{
+      if (!window.SquishBurnerLinks?.create) throw new Error('The single-use link module is not ready');
+      const burner = await window.SquishBurnerLinks.create(password, {{ttlHours: 24}});
+      receipt.burner_url = burner.url;
+      receipt.burner_expires_at = burner.expiresAt;
+    }} catch (error) {{
+      receipt.burner_error = error instanceof Error ? error.message : String(error);
+    }}
   }}
   return receipt;
 }};
@@ -417,6 +334,13 @@ out_path = os.path.join(os.path.dirname(__file__), 'static', 'client_tools.js')
 with open(out_path, "w") as f:
     f.write(js_content)
 
+worker_template_path = os.path.join(os.path.dirname(__file__), 'client_tools_worker.template.js')
+with open(worker_template_path, 'r') as f:
+    worker_content = f.read().replace('__TOOLS_PY_SOURCE_JSON__', json.dumps(tools_py_content))
+worker_path = os.path.join(os.path.dirname(__file__), 'static', 'client_tools_worker.js')
+with open(worker_path, 'w') as f:
+    f.write(worker_content)
+
 # Emit a clean, canonical tools.json (valid, pretty-printed) alongside the JS.
 # Previously this file was produced by hand with stdout redirection, which
 # leaked the PyMuPDF import banner into it and left it as invalid JSON.
@@ -425,4 +349,4 @@ with open(registry_path, "w") as f:
     json.dump(registry_data, f, indent=2)
     f.write("\n")
 
-print(f"Generated {out_path} and {registry_path} successfully!")
+print(f"Generated {out_path}, {worker_path}, and {registry_path} successfully!")

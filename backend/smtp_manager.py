@@ -7,19 +7,27 @@ Email #2: Decryption password notification.
 
 from __future__ import annotations
 
+import html
+import logging
+import os
 import re
+import secrets
+import socket
 import smtplib
 import ssl
 import time
+from html.parser import HTMLParser
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formatdate, make_msgid, parseaddr
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 
 MAX_ATTACHMENTS = 10
 MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024
+MAX_DISPATCH_DELAY_SECONDS = 10.0
+log = logging.getLogger("uvicorn.error")
 
 # ------------------------------------------------------------ sanitizers ---
 # Email headers are newline-delimited (RFC 5322). Any \r or \n coming from a
@@ -28,6 +36,96 @@ MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024
 # headers (e.g. an extra Bcc:) or break the MIME structure entirely. Strip
 # control characters from every such field before it touches a header.
 _HEADER_STRIP_RE = re.compile(r'[\r\n\x00]')
+_BLOCKED_EMAIL_TAGS = {
+    "script", "style", "iframe", "object", "embed", "form", "input",
+    "button", "meta", "link", "base", "svg", "math", "img",
+}
+_BLOCKED_CONTENT_TAGS = {"script", "style", "iframe", "object", "svg", "math"}
+_ALLOWED_EMAIL_TAGS = {
+    "a", "b", "blockquote", "br", "center", "code", "div", "em", "h1",
+    "h2", "h3", "h4", "hr", "i", "li", "ol", "p", "pre", "small",
+    "span", "strong", "table", "tbody", "td", "tfoot", "th", "thead",
+    "tr", "u", "ul",
+}
+_ALLOWED_EMAIL_ATTRS = {
+    "align", "bgcolor", "border", "cellpadding", "cellspacing", "colspan",
+    "height", "href", "role", "rowspan", "style", "target", "valign", "width",
+}
+_UNSAFE_STYLE_RE = re.compile(r"url\s*\(|expression\s*\(|@import|behavior\s*:|-moz-binding", re.I)
+
+
+class _EmailHTMLSanitizer(HTMLParser):
+    """Small allow-list sanitizer shared by the trusted SMTP send path."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.output: list[str] = []
+        self.blocked_depth = 0
+
+    def handle_starttag(self, tag: str, attrs) -> None:
+        tag = tag.lower()
+        if tag in _BLOCKED_CONTENT_TAGS:
+            self.blocked_depth += 1
+            return
+        if tag in _BLOCKED_EMAIL_TAGS:
+            return
+        if self.blocked_depth or tag not in _ALLOWED_EMAIL_TAGS:
+            return
+        safe_attrs: list[tuple[str, str]] = []
+        for raw_name, raw_value in attrs:
+            name = str(raw_name or "").lower()
+            value = str(raw_value or "")
+            if name not in _ALLOWED_EMAIL_ATTRS or name.startswith("on"):
+                continue
+            if name == "href" and not re.match(r"^(?:https://|mailto:|tel:|#)", value, re.I):
+                continue
+            if name == "style" and _UNSAFE_STYLE_RE.search(value):
+                continue
+            safe_attrs.append((name, value))
+        if tag == "a":
+            safe_attrs = [(name, value) for name, value in safe_attrs if name not in {"target", "rel"}]
+            safe_attrs.extend((("target", "_blank"), ("rel", "noopener noreferrer")))
+        encoded = "".join(
+            f' {name}="{html.escape(value, quote=True)}"' for name, value in safe_attrs
+        )
+        self.output.append(f"<{tag}{encoded}>")
+
+    def handle_startendtag(self, tag: str, attrs) -> None:
+        if tag.lower() in _BLOCKED_EMAIL_TAGS:
+            return
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in _BLOCKED_CONTENT_TAGS:
+            if self.blocked_depth:
+                self.blocked_depth -= 1
+            return
+        if tag in _BLOCKED_EMAIL_TAGS:
+            return
+        if not self.blocked_depth and tag in _ALLOWED_EMAIL_TAGS and tag not in {"br", "hr"}:
+            self.output.append(f"</{tag}>")
+
+    def handle_data(self, data: str) -> None:
+        if not self.blocked_depth:
+            self.output.append(html.escape(data, quote=False))
+
+
+def sanitize_email_html(value: Any) -> str:
+    sanitizer = _EmailHTMLSanitizer()
+    sanitizer.feed(str(value or ""))
+    sanitizer.close()
+    return "".join(sanitizer.output)
+
+
+def clamp_dispatch_delay(value: Any) -> float:
+    try:
+        delay = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("Dispatch delay must be a number")
+    if not delay == delay or delay in {float("inf"), float("-inf")}:
+        raise ValueError("Dispatch delay must be finite")
+    return min(MAX_DISPATCH_DELAY_SECONDS, max(0.5, delay))
 
 
 def sanitize_header_value(val: Any) -> str:
@@ -73,40 +171,185 @@ def _html_wrapper(inner: str) -> str:
     )
 
 
-def _connect(smtp: Dict[str, Any], timeout: float) -> smtplib.SMTP:
+def _connect(
+    smtp: Dict[str, Any],
+    timeout: float,
+    on_stage: Optional[Callable[[str], None]] = None,
+) -> smtplib.SMTP:
+    """Connect and authenticate, optionally reporting the current SMTP stage.
+
+    The callback is intentionally metadata-only. Credentials and protocol
+    payloads never leave this function.
+    """
+    def stage(name: str) -> None:
+        if on_stage:
+            on_stage(name)
+
+    stage("configuration")
     host = smtp.get("server") or smtp.get("host")
     port = int(smtp.get("port") or 587)
     username = smtp.get("username")
     password_auth = smtp.get("password")
-    security = smtp.get("security") or ("ssl" if port == 465 else "starttls")
+    security = str(smtp.get("security") or ("ssl" if port == 465 else "starttls")).lower()
+    if security not in {"ssl", "starttls", "none"}:
+        raise ValueError("SMTP security must be SSL or STARTTLS")
+    if security == "none" and os.environ.get("SQUISH_ALLOW_PLAINTEXT_SMTP") != "1":
+        raise ValueError(
+            "Plaintext SMTP is disabled; use SSL/STARTTLS or explicitly set "
+            "SQUISH_ALLOW_PLAINTEXT_SMTP=1"
+        )
 
+    stage("connection")
     if port == 465 or security == "ssl":
         context = ssl.create_default_context()
         server = smtplib.SMTP_SSL(host, port, context=context, timeout=timeout)
     else:
         server = smtplib.SMTP(host, port, timeout=timeout)
 
+    stage("ehlo")
     server.ehlo()
     if port != 465 and security != "ssl" and (security == "starttls" or port == 587):
+        stage("starttls")
         context = ssl.create_default_context()
         server.starttls(context=context)
+        stage("ehlo_after_tls")
         server.ehlo()
 
     if username and password_auth:
+        stage("authentication")
         server.login(username, password_auth)
 
+    stage("authenticated")
     return server
+
+
+def _safe_smtp_reply(exc: BaseException) -> str:
+    reply = getattr(exc, "smtp_error", b"")
+    if isinstance(reply, bytes):
+        reply = reply.decode("utf-8", "replace")
+    # Relay replies are untrusted text. Keep them single-line and bounded so
+    # they cannot inject UI markup or turn a response into a log/HTML dump.
+    return sanitize_header_value(reply)[:220]
+
+
+def _smtp_diagnostic(exc: BaseException, stage: str, error_id: str) -> Dict[str, Any]:
+    """Map transport/library failures to a stable, secret-safe API response."""
+    code = getattr(exc, "smtp_code", None)
+    try:
+        smtp_code = int(code) if code is not None else None
+    except (TypeError, ValueError):
+        smtp_code = None
+    reply = _safe_smtp_reply(exc)
+
+    category = "connection_failed"
+    error = "The SMTP connection failed."
+    hint = "Check the server log using the diagnostic ID below."
+    failed_stage = stage or "connection"
+
+    if isinstance(exc, socket.gaierror):
+        failed_stage, category = "dns", "host_not_found"
+        error = "The SMTP hostname could not be resolved."
+        hint = "Check the server hostname and DNS available to the Squish deployment."
+    elif isinstance(exc, ssl.SSLCertVerificationError):
+        failed_stage, category = "tls", "certificate_rejected"
+        error = "The SMTP server certificate could not be verified."
+        hint = "Check the hostname, certificate chain, validity dates, and deployment CA store."
+    elif isinstance(exc, ssl.SSLError):
+        failed_stage, category = "tls", "tls_failed"
+        error = "TLS negotiation with the SMTP server failed."
+        hint = "Confirm that the selected port and security mode match the relay configuration."
+    elif isinstance(exc, smtplib.SMTPAuthenticationError):
+        failed_stage, category = "authentication", "credentials_rejected"
+        error = "The SMTP server rejected the username or password."
+        hint = "Confirm the authentication username, password, and whether this account permits SMTP AUTH."
+    elif isinstance(exc, smtplib.SMTPNotSupportedError):
+        if failed_stage == "starttls":
+            category = "starttls_not_supported"
+            error = "The SMTP server does not offer STARTTLS."
+            hint = "Confirm the port and security mode; port 465 normally uses direct SSL/TLS."
+        else:
+            failed_stage, category = "authentication", "auth_not_supported"
+            error = "The SMTP server does not offer a supported authentication method."
+            hint = "The relay may use IP allowlisting instead of SMTP AUTH; ask the relay administrator."
+    elif isinstance(exc, smtplib.SMTPHeloError):
+        failed_stage, category = "ehlo", "ehlo_rejected"
+        error = "The SMTP server rejected the EHLO greeting."
+        hint = "Check the relay policy and the server log for the full diagnostic."
+    elif isinstance(exc, smtplib.SMTPConnectError):
+        failed_stage, category = "greeting", "greeting_rejected"
+        error = "The SMTP server rejected the initial connection."
+        hint = "Check the SMTP reply and whether this deployment's source IP is allowed."
+    elif isinstance(exc, smtplib.SMTPResponseException):
+        category = "relay_rejected"
+        error = "The SMTP server rejected the request."
+        hint = "Check the SMTP reply and the relay's authentication or source-IP policy."
+        if smtp_code == 530:
+            failed_stage, category = "authentication", "authentication_required"
+            error = "The SMTP server requires authentication."
+            hint = "Confirm that SMTP AUTH is enabled and that the configured account may use it."
+        elif smtp_code in {534, 535}:
+            failed_stage, category = "authentication", "credentials_rejected"
+            error = "The SMTP server rejected the username or password."
+            hint = "Confirm the authentication username, password, and whether this account permits SMTP AUTH."
+    elif isinstance(exc, (TimeoutError, socket.timeout)):
+        category = "timeout"
+        error = f"The SMTP server timed out during {failed_stage.replace('_', ' ')}."
+        hint = "Check firewall rules, relay availability, and access from the actual Squish deployment."
+    elif isinstance(exc, ConnectionRefusedError):
+        failed_stage, category = "connection", "connection_refused"
+        error = "The SMTP server refused the TCP connection."
+        hint = "Check the hostname, port, firewall, and whether the relay is listening."
+    elif isinstance(exc, smtplib.SMTPServerDisconnected):
+        category = "server_disconnected"
+        error = f"The SMTP server disconnected during {failed_stage.replace('_', ' ')}."
+        hint = "Check the relay log and whether it permits this deployment's source IP."
+    elif isinstance(exc, ValueError):
+        failed_stage, category = "configuration", "invalid_configuration"
+        error = sanitize_header_value(str(exc))[:220] or "The SMTP configuration is invalid."
+        hint = "Correct the SMTP host, port, and security settings."
+    elif isinstance(exc, OSError):
+        failed_stage, category = "connection", "network_error"
+        error = "The SMTP server could not be reached from the Squish deployment."
+        hint = "A test from your computer does not prove connectivity from Docker, Kubernetes, or Cloudflare."
+
+    result: Dict[str, Any] = {
+        "ok": False,
+        "stage": failed_stage,
+        "category": category,
+        "error": error,
+        "hint": hint,
+        "diagnostic_id": error_id,
+    }
+    if smtp_code is not None:
+        result["smtp_code"] = smtp_code
+    if reply:
+        result["relay_response"] = reply
+    return result
 
 
 def test_smtp_connection(smtp: Dict[str, Any]) -> Dict[str, Any]:
     """Test connection and authentication to the specified SMTP server."""
     host = smtp.get("server") or smtp.get("host")
     if not host:
-        return {"ok": False, "error": "SMTP server host is required"}
+        return _smtp_diagnostic(
+            ValueError("SMTP server host is required"),
+            "configuration",
+            secrets.token_hex(4),
+        )
 
-    port = int(smtp.get("port") or 587)
     try:
-        server = _connect(smtp, timeout=15)
+        port = int(smtp.get("port") or 587)
+    except (TypeError, ValueError) as exc:
+        error_id = secrets.token_hex(4)
+        return _smtp_diagnostic(exc, "configuration", error_id)
+    current_stage = "configuration"
+
+    def record_stage(stage: str) -> None:
+        nonlocal current_stage
+        current_stage = stage
+
+    try:
+        server = _connect(smtp, timeout=15, on_stage=record_stage)
         try:
             server.quit()
         except Exception:
@@ -116,7 +359,12 @@ def test_smtp_connection(smtp: Dict[str, Any]) -> Dict[str, Any]:
             "message": f"Successfully connected and authenticated to {host}:{port}"
         }
     except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+        error_id = secrets.token_hex(4)
+        log.exception(
+            "SMTP connection test failed for %s:%s at stage=%s diagnostic_id=%s",
+            host, port, current_stage, error_id,
+        )
+        return _smtp_diagnostic(exc, current_stage, error_id)
 
 
 def _build_email2(
@@ -153,10 +401,13 @@ def _build_email2(
     if email2_body:
         rendered_custom_e2 = email2_body.replace("{{password}}", password).replace("{{doc_name}}", pdf_filename).replace("{{filename}}", pdf_filename)
         if "<" in rendered_custom_e2 and ">" in rendered_custom_e2:
-            html_text2 = rendered_custom_e2
+            html_text2 = sanitize_email_html(rendered_custom_e2)
             plain_text2 = f"Decryption Key: {password}\nFile: {pdf_filename}"
         else:
-            html_paras = "".join(f"<p>{line}</p>" for line in rendered_custom_e2.split("\n") if line.strip())
+            html_paras = "".join(
+                f"<p>{html.escape(line)}</p>"
+                for line in rendered_custom_e2.split("\n") if line.strip()
+            )
             html_text2 = _html_wrapper(html_paras)
             plain_text2 = rendered_custom_e2
     else:
@@ -168,11 +419,11 @@ def _build_email2(
         html_text2 = _html_wrapper(
             '<h2 style="color: #1b1d23; margin-top: 0;">Your Document Decryption Key</h2>'
             '<p style="color: #33363f; line-height: 1.5;">Use the password below to open the encrypted PDF '
-            f'document (<strong>{pdf_filename}</strong>) you recently received:</p>'
+            f'document (<strong>{html.escape(pdf_filename)}</strong>) you recently received:</p>'
             '<div style="background: #efeee9; padding: 16px 20px; border-radius: 6px; margin: 20px 0; '
             'text-align: center; border: 1px solid #d4d1c8;">'
             f'<span style="font-family: monospace; font-size: 20px; font-weight: 700; color: #1b1d23; '
-            f'letter-spacing: 2px;">{password}</span>'
+            f'letter-spacing: 2px;">{html.escape(password)}</span>'
             '</div>'
             '<p style="color: #5c6070; font-size: 13px;">Please keep this password secure and do not forward it '
             'alongside the encrypted document.</p>'
@@ -263,6 +514,7 @@ def send_dual_secure_email(
     mode = str(key_delivery_mode or "email").lower()
     if mode not in {"email", "oob", "dual"}:
         raise ValueError("key_delivery_mode must be email, oob, or dual")
+    delay_seconds = clamp_dispatch_delay(delay_seconds)
 
     pool: list[Dict[str, Any]] = smtp if isinstance(smtp, list) else [smtp]
     if not pool or not any(p.get("server") or p.get("host") for p in pool):
@@ -313,25 +565,28 @@ def send_dual_secure_email(
                 )
 
                 if html_body and ("<" in html_body and ">" in html_body):
-                    html_text1 = html_body
+                    html_text1 = sanitize_email_html(html_body)
                 elif html_body:
-                    html_paragraphs = "".join(f"<p>{line}</p>" for line in html_body.split("\n") if line.strip())
+                    html_paragraphs = "".join(
+                        f"<p>{html.escape(line)}</p>"
+                        for line in html_body.split("\n") if line.strip()
+                    )
                     html_text1 = _html_wrapper(
-                        f'<h2 style="color: #1b1d23; margin-top: 0;">{subject or "Secure Document Attached"}</h2>'
+                        f'<h2 style="color: #1b1d23; margin-top: 0;">{html.escape(subject or "Secure Document Attached")}</h2>'
                         f'{html_paragraphs}'
                         '<div style="background: #f7f6f3; padding: 14px 18px; border-radius: 6px; margin: 18px 0; border-left: 4px solid #2f5fd8;">'
-                        f'<p style="margin: 0; color: #1b1d23; font-size: 14px;"><strong>Attached:</strong> {attachment_label}</p>'
-                        f'<p style="margin: 4px 0 0; color: #5c6070; font-size: 13px;">{delivery_note}</p>'
+                        f'<p style="margin: 0; color: #1b1d23; font-size: 14px;"><strong>Attached:</strong> {html.escape(attachment_label)}</p>'
+                        f'<p style="margin: 4px 0 0; color: #5c6070; font-size: 13px;">{html.escape(delivery_note)}</p>'
                         '</div>'
                     )
                 else:
                     html_text1 = _html_wrapper(
                         '<h2 style="color: #1b1d23; margin-top: 0;">Secure Document Attached</h2>'
                         f'<p style="color: #33363f; line-height: 1.5;">You have received '
-                        f'<strong>{attachment_label}</strong>.</p>'
+                        f'<strong>{html.escape(attachment_label)}</strong>.</p>'
                         '<div style="background: #f7f6f3; padding: 14px 18px; border-radius: 6px; margin: 18px 0; border-left: 4px solid #2f5fd8;">'
                         '<p style="margin: 0; color: #1b1d23; font-size: 14px;"><strong>Note:</strong> '
-                        f'The attached files are password-protected for your security. {delivery_note}</p>'
+                        f'The attached files are password-protected for your security. {html.escape(delivery_note)}</p>'
                         '</div>'
                         '<p style="color: #5c6070; font-size: 13px;">Dispatched via Squish Secure Dispatch.</p>'
                     )
@@ -354,7 +609,7 @@ def send_dual_secure_email(
 
                 if mode in {"email", "dual"}:
                     # --------------------------------------------------------- DELAY ---
-                    time.sleep(max(0.5, float(delay_seconds)))
+                    time.sleep(delay_seconds)
 
                     # --------------------------------------------------------- EMAIL 2 ---
                     msg2 = _build_email2(

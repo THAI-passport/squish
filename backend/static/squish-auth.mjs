@@ -443,6 +443,13 @@ export function validateCloudVault(payload) {
       password: bounded(profile?.password, 4096, 'SMTP password', true),
       from_name: bounded(profile?.from_name, 320, 'Sender name'),
       security,
+      dns_check: profile?.dns_check && typeof profile.dns_check === 'object' ? {
+        checked_at: bounded(profile.dns_check.checked_at, 80, 'DNS check timestamp'),
+        ok: Boolean(profile.dns_check.ok),
+        warnings: Array.isArray(profile.dns_check.warnings)
+          ? profile.dns_check.warnings.slice(0, 8).map(item => bounded(item, 512, 'DNS warning'))
+          : [],
+      } : null,
       created_at: bounded(profile?.created_at, 80, 'Profile timestamp'),
     };
   });
@@ -474,7 +481,6 @@ export function validateCloudVault(payload) {
     signed: Boolean(record?.signed),
     message: bounded(record?.message, 4096, 'History message'),
     error: bounded(record?.error, 4096, 'History error'),
-    password: bounded(record?.password, 4096, 'History password'),
     has_password: Boolean(record?.password || record?.has_password),
   }));
   const safe = {schema_version: 1, profiles: safeProfiles, templates: safeTemplates, history: safeHistory};
@@ -484,9 +490,32 @@ export function validateCloudVault(payload) {
   return safe;
 }
 
-async function vaultKey(env, googleSub) {
+function currentVaultKeyVersion(env) {
+  const version = Number.parseInt(String(env?.CLOUD_VAULT_KEY_CURRENT || '1'), 10);
+  if (!Number.isInteger(version) || version < 1 || version > 99) {
+    throw new AuthError(503, 'vault_not_configured', 'CLOUD_VAULT_KEY_CURRENT is invalid');
+  }
+  return version;
+}
+
+function vaultSecret(env, version) {
+  const configured = env?.[`CLOUD_VAULT_KEY_V${version}`];
+  const secret = configured || (version === 1 ? env?.SESSION_SECRET : '');
+  if (typeof secret !== 'string' || secret.length < 32) {
+    throw new AuthError(503, 'vault_key_unavailable', `Cloud Vault key version ${version} is unavailable`);
+  }
+  return secret;
+}
+
+function vaultAdditionalData(googleSub, keyVersion) {
+  return keyVersion === 1
+    ? `squish-vault:${googleSub}:v1`
+    : `squish-vault:${googleSub}:v1:key:${keyVersion}`;
+}
+
+async function vaultKey(env, googleSub, keyVersion) {
   return purposeKey(
-    env.SESSION_SECRET,
+    vaultSecret(env, keyVersion),
     `squish-cloud-vault-v1:${googleSub}`,
     {name: 'AES-GCM', length: 256},
     ['encrypt', 'decrypt'],
@@ -496,21 +525,23 @@ async function vaultKey(env, googleSub) {
 export async function encryptCloudVault(payload, env, googleSub) {
   const safe = validateCloudVault(payload);
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await vaultKey(env, googleSub);
+  const keyVersion = currentVaultKeyVersion(env);
+  const key = await vaultKey(env, googleSub, keyVersion);
   const ciphertext = await crypto.subtle.encrypt(
-    {name: 'AES-GCM', iv, additionalData: encoder.encode(`squish-vault:${googleSub}:v1`)},
+    {name: 'AES-GCM', iv, additionalData: encoder.encode(vaultAdditionalData(googleSub, keyVersion))},
     key,
     encoder.encode(JSON.stringify(safe)),
   );
-  return {schema_version: 1, iv: bytesToBase64Url(iv), ciphertext: bytesToBase64Url(ciphertext)};
+  return {schema_version: 1, key_version: keyVersion, iv: bytesToBase64Url(iv), ciphertext: bytesToBase64Url(ciphertext)};
 }
 
 export async function decryptCloudVault(envelope, env, googleSub) {
   if (!envelope || Number(envelope.schema_version) !== 1) throw new AuthError(500, 'vault_unreadable', 'Cloud vault format is unsupported');
   try {
-    const key = await vaultKey(env, googleSub);
+    const keyVersion = Number(envelope.key_version || 1);
+    const key = await vaultKey(env, googleSub, keyVersion);
     const plaintext = await crypto.subtle.decrypt(
-      {name: 'AES-GCM', iv: base64UrlToBytes(envelope.iv), additionalData: encoder.encode(`squish-vault:${googleSub}:v1`)},
+      {name: 'AES-GCM', iv: base64UrlToBytes(envelope.iv), additionalData: encoder.encode(vaultAdditionalData(googleSub, keyVersion))},
       key,
       base64UrlToBytes(envelope.ciphertext),
     );
@@ -522,7 +553,7 @@ export async function decryptCloudVault(envelope, env, googleSub) {
 }
 
 function requireVaultDatabase(env) {
-  if (!env.AUTH_DB) throw new AuthError(503, 'vault_not_configured', 'AUTH_DB is not bound to this Pages project');
+  if (!env.AUTH_DB) throw new AuthError(503, 'vault_not_configured', 'AUTH_DB is not bound to this Workers project');
   return env.AUTH_DB;
 }
 
@@ -559,10 +590,21 @@ async function handleVault(request, env) {
   const database = requireVaultDatabase(env);
   if (request.method === 'GET') {
     const row = await database.prepare(
-      'SELECT schema_version, iv, ciphertext, updated_at FROM oauth_vaults WHERE google_sub = ?',
+      'SELECT schema_version, key_version, iv, ciphertext, updated_at FROM oauth_vaults WHERE google_sub = ?',
     ).bind(session.sub).first();
     if (!row) return json({ok: true, vault: validateCloudVault({}), updated_at: null});
     const vault = await decryptCloudVault(row, env, session.sub);
+    const desiredKeyVersion = currentVaultKeyVersion(env);
+    if (Number(row.key_version || 1) !== desiredKeyVersion) {
+      const rewrapped = await encryptCloudVault(vault, env, session.sub);
+      const rewrappedAt = new Date().toISOString();
+      await database.prepare(
+        `UPDATE oauth_vaults SET schema_version = ?, key_version = ?, iv = ?, ciphertext = ?, updated_at = ?
+         WHERE google_sub = ?`,
+      ).bind(rewrapped.schema_version, rewrapped.key_version, rewrapped.iv,
+        rewrapped.ciphertext, rewrappedAt, session.sub).run();
+      row.updated_at = rewrappedAt;
+    }
     return json({ok: true, vault, updated_at: row.updated_at || null});
   }
   if (request.method === 'PUT') {
@@ -579,11 +621,13 @@ async function handleVault(request, env) {
            updated_at = excluded.updated_at`,
       ).bind(session.sub, session.email, session.name, session.picture, now, now),
       database.prepare(
-        `INSERT INTO oauth_vaults (google_sub, schema_version, iv, ciphertext, updated_at)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO oauth_vaults (google_sub, schema_version, key_version, iv, ciphertext, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(google_sub) DO UPDATE SET schema_version = excluded.schema_version,
-           iv = excluded.iv, ciphertext = excluded.ciphertext, updated_at = excluded.updated_at`,
-      ).bind(session.sub, encrypted.schema_version, encrypted.iv, encrypted.ciphertext, now),
+           key_version = excluded.key_version, iv = excluded.iv,
+           ciphertext = excluded.ciphertext, updated_at = excluded.updated_at`,
+      ).bind(session.sub, encrypted.schema_version, encrypted.key_version,
+        encrypted.iv, encrypted.ciphertext, now),
     ]);
     return json({ok: true, updated_at: now});
   }

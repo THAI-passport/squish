@@ -24,12 +24,14 @@ async function runTests() {
   // 1. Initial state
   assert.strictEqual(Vault.isConfigured(), false, 'Vault should not be configured initially');
   assert.strictEqual(Vault.isUnlocked(), false, 'Vault should not be unlocked initially');
+  await assert.rejects(() => Vault.initVault('4829'), /at least 6 characters/);
 
   // 2. Initialize with PIN
-  await Vault.initVault('4829');
+  await Vault.initVault('4829x!');
   assert.strictEqual(Vault.isConfigured(), true, 'Vault is now configured');
   assert.strictEqual(Vault.isUnlocked(), true, 'Vault is unlocked after init');
   assert.strictEqual(Vault.getProfilesCount(), 0, 'Profiles count should be 0');
+  assert.strictEqual(JSON.parse(storage.squish_smtp_vault).kdf.iterations, 600000);
 
   // 3. Add profile
   const id1 = await Vault.addProfile({
@@ -70,7 +72,7 @@ async function runTests() {
   // Incorrect PIN fails
   let failed = false;
   try {
-    await Vault.unlockVault('9999');
+    await Vault.unlockVault('9999x?');
   } catch (err) {
     failed = true;
     assert.strictEqual(err.message, 'Incorrect Master PIN');
@@ -78,7 +80,7 @@ async function runTests() {
   assert.strictEqual(failed, true, 'Incorrect PIN rejected');
 
   // Correct PIN succeeds
-  await Vault.unlockVault('4829');
+  await Vault.unlockVault('4829x!');
   assert.strictEqual(Vault.isUnlocked(), true, 'Vault unlocked with correct PIN');
   assert.strictEqual(Vault.getProfilesCount(), 1, 'Restored profiles count');
   assert.strictEqual(Vault.getMaskedProfiles()[0].from_name, 'Alice Accounts Receivable');
@@ -150,7 +152,7 @@ async function runTests() {
   assert.strictEqual(hist[0].pdf_filename, 'Invoice_101_protected.pdf');
 
   // 11. Custom templates reject password crossover and survive vault backup.
-  await Vault.unlockVault('4829');
+  await Vault.unlockVault('4829x!');
   const templateId = await Vault.saveTemplate({
     name: 'Legal notice',
     subject: 'Confidential {{doc_name}}',
@@ -188,7 +190,7 @@ async function runTests() {
 
   Vault.wipeAll();
   Vault.clearDispatchHistory();
-  await Vault.initVault('7391');
+  await Vault.initVault('7391x!');
   const imported = await Vault.importBackup(backup, 'correct horse battery staple', 'replace');
   assert.strictEqual(imported.profiles, 4);
   assert.strictEqual(imported.templates, 1);

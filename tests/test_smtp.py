@@ -1,6 +1,9 @@
 """Tests for SMTP Manager and Secure Email Dispatch."""
 
 import json
+import smtplib
+import socket
+import ssl
 from datetime import datetime, timedelta, timezone
 from email import message_from_string
 from pathlib import Path
@@ -71,6 +74,88 @@ def test_test_smtp_connection_success(mock_smtp):
     assert "Successfully connected" in res["message"]
     mock_inst.starttls.assert_called_once()
     mock_inst.login.assert_called_once_with("user@example.com", "secretpassword")
+
+
+@patch("smtplib.SMTP")
+def test_smtp_diagnostic_identifies_rejected_credentials_without_leaking_secret(mock_smtp):
+    mock_inst = MagicMock()
+    mock_smtp.return_value = mock_inst
+    mock_inst.login.side_effect = smtplib.SMTPAuthenticationError(
+        535, b"5.7.8 Authentication credentials invalid\r\nretry denied"
+    )
+
+    res = smtp_manager.test_smtp_connection({
+        "server": "smtp.example.com", "port": 587,
+        "username": "user@example.com", "password": "do-not-leak-this",
+        "security": "starttls",
+    })
+
+    assert res["ok"] is False
+    assert res["stage"] == "authentication"
+    assert res["category"] == "credentials_rejected"
+    assert res["smtp_code"] == 535
+    assert res["relay_response"] == "5.7.8 Authentication credentials invalidretry denied"
+    assert len(res["diagnostic_id"]) == 8
+    assert "do-not-leak-this" not in json.dumps(res)
+
+
+@patch("smtplib.SMTP")
+def test_smtp_diagnostic_identifies_auth_not_supported(mock_smtp):
+    mock_inst = MagicMock()
+    mock_smtp.return_value = mock_inst
+    mock_inst.login.side_effect = smtplib.SMTPNotSupportedError(
+        "SMTP AUTH extension not supported by server"
+    )
+
+    res = smtp_manager.test_smtp_connection({
+        "server": "relay.example.com", "port": 587,
+        "username": "user@example.com", "password": "pw",
+        "security": "starttls",
+    })
+
+    assert res["stage"] == "authentication"
+    assert res["category"] == "auth_not_supported"
+    assert "IP allowlisting" in res["hint"]
+
+
+@patch("smtplib.SMTP", side_effect=socket.gaierror(-2, "Name or service not known"))
+def test_smtp_diagnostic_identifies_dns_failure(_mock_smtp):
+    res = smtp_manager.test_smtp_connection({
+        "server": "missing.invalid", "port": 587,
+        "username": "user@example.com", "password": "pw",
+        "security": "starttls",
+    })
+    assert res["stage"] == "dns"
+    assert res["category"] == "host_not_found"
+
+
+@patch("smtplib.SMTP", side_effect=socket.timeout("timed out"))
+def test_smtp_diagnostic_identifies_connection_timeout(_mock_smtp):
+    res = smtp_manager.test_smtp_connection({
+        "server": "slow.example.com", "port": 587,
+        "username": "user@example.com", "password": "pw",
+        "security": "starttls",
+    })
+    assert res["stage"] == "connection"
+    assert res["category"] == "timeout"
+
+
+@patch("smtplib.SMTP_SSL", side_effect=ssl.SSLCertVerificationError("hostname mismatch"))
+def test_smtp_diagnostic_identifies_certificate_failure(_mock_smtp):
+    res = smtp_manager.test_smtp_connection({
+        "server": "smtp.example.com", "port": 465,
+        "username": "user@example.com", "password": "pw",
+        "security": "ssl",
+    })
+    assert res["stage"] == "tls"
+    assert res["category"] == "certificate_rejected"
+
+
+def test_smtp_diagnostic_validation_has_stable_shape():
+    res = smtp_manager.test_smtp_connection({})
+    assert res["stage"] == "configuration"
+    assert res["category"] == "invalid_configuration"
+    assert res["diagnostic_id"]
 
 
 @patch("smtplib.SMTP")
@@ -274,7 +359,8 @@ def test_email_secure_tool(mock_smtp, tmp_path):
     data = json.loads(result.path.read_text(encoding="utf-8"))
     assert data["status"] == "success"
     assert data["recipient"] == "target@example.com"
-    assert data["password"] == "MySecretPass999!"
+    assert "password" not in data
+    assert data["password_included"] is False
 
     protected_pdf = work / "sample_protected.pdf"
     assert protected_pdf.exists()
@@ -501,7 +587,8 @@ def test_email_secure_tool_reports_partial_failure(mock_smtp, tmp_path):
     assert data["status"] == "partial_failure"
     assert data["step1_sent"] is True
     assert data["step2_sent"] is False
-    assert data["password"] == "MySecretPass999!"
+    assert "password" not in data
+    assert "password" not in data["resend"]
     assert "smtp" not in data["resend"]  # never round-trips the SMTP secret
 
 
@@ -631,5 +718,33 @@ def test_email_secure_tool_includes_stego_tag_and_relay(mock_smtp, tmp_path):
     assert data["step1_sent"] is True
     assert data["step2_sent"] is True
     assert "stego_tag" in data
-    assert len(data["stego_tag"]) == 8
+    assert len(data["stego_tag"]) == 32
     assert "smtp.example.com" in data["relay_used"]
+
+
+def test_dispatch_delay_is_clamped():
+    assert smtp_manager.clamp_dispatch_delay(-100) == 0.5
+    assert smtp_manager.clamp_dispatch_delay(100000) == 10.0
+    with pytest.raises(ValueError, match="finite"):
+        smtp_manager.clamp_dispatch_delay(float("inf"))
+
+
+def test_email_html_sanitizer_removes_active_and_tracking_content():
+    cleaned = smtp_manager.sanitize_email_html(
+        '<p onclick="steal()">Hello <a href="javascript:bad()">link</a></p>'
+        '<img src="https://tracker.invalid/pixel"><script>alert(1)</script>'
+    )
+    assert "onclick" not in cleaned
+    assert "javascript:" not in cleaned
+    assert "<img" not in cleaned
+    assert "script" not in cleaned
+    assert "Hello" in cleaned
+
+
+def test_plaintext_smtp_requires_explicit_opt_in(monkeypatch):
+    monkeypatch.delenv("SQUISH_ALLOW_PLAINTEXT_SMTP", raising=False)
+    with pytest.raises(ValueError, match="Plaintext SMTP is disabled"):
+        smtp_manager._connect({
+            "server": "smtp.example.com", "port": 2525,
+            "security": "none", "username": "sender@example.com", "password": "pw",
+        }, timeout=1)

@@ -24,6 +24,53 @@ because bucket C is where a weekend project turns into an operations job.
 
 ---
 
+## Phase 2 — implemented in v2.0
+
+The static build now keeps PDF processing on the user's device. Secure delivery
+still uses a deliberately small edge service, so it is described as
+zero-knowledge delivery rather than literally zero-server.
+
+### 1. Single-use decryption links — complete
+
+- A SQLite-backed Durable Object serialises redemption and atomically reads and
+  deletes the encrypted envelope. Concurrent redemption tests permit exactly
+  one success.
+- The browser wraps the PDF password with a separate 256-bit AES-GCM key. Only
+  ciphertext, IV and expiry reach the Worker; the unwrap key remains in the URL
+  fragment.
+- Records expire after 24–72 hours, with validation on read and an alarm cleanup
+  backstop. Unlock responses use no-store, no-referrer and a restrictive CSP.
+- The sender shares the full burner URL separately using copy or the OS share
+  sheet, keeping the fragment secret out of Squish's email Worker.
+
+### 2. OPFS-backed processing — complete, benchmarking remains
+
+- A dedicated module worker owns Pyodide, performs quota checks, requests
+  persistent storage and stages inputs through chunked file streams.
+- `createSyncAccessHandle()` and Pyodide `mountNativeFS()` provide seekable,
+  disk-backed input where supported. An in-memory adapter is retained for other
+  browsers.
+- Jobs are serialised, cancellation terminates processing, and both success and
+  failure paths remove the private job directory before reporting completion.
+
+OPFS avoids duplicate JavaScript buffers, but it cannot guarantee that every
+WASM engine avoids whole-file memory mapping. The 250 MB, 500 MB and 1 GB
+browser-matrix benchmark is still required before advertising gigabyte-scale
+support.
+
+### 3. In-browser OCR — complete for six Latin-script models
+
+- Tesseract.js, its worker/core files and six language models are vendored;
+  there is no runtime CDN. Tesseract caches the model in IndexedDB.
+- Recognition is page-by-page in its own worker. PyMuPDF adds an invisible text
+  layer over the original scan and verifies both searchable output and unchanged
+  rendered pixels before returning the file.
+- English, French, German, Spanish, Portuguese and Italian are enabled. Further
+  work is limited to non-Latin models, rotated/mixed-DPI regression fixtures and
+  broader cross-browser memory measurements.
+
+---
+
 ## Phase 1 — bucket A: cheap wins, no architecture change
 
 These are all "write a function, add a `Tool(...)` entry". Nothing else moves.

@@ -1147,16 +1147,20 @@ def _dispatch_extract_pages(work: Path, source: Path, spec: str,
     return dest
 
 
-def _encode_zero_width_tag(recipient: str, secret_seed: str = "") -> tuple[str, str]:
-    """Encode recipient + optional secret into invisible zero-width unicode characters.
+def _encode_zero_width_tag(recipient: str, secret_seed: str) -> tuple[str, str]:
+    """Encode a keyed leak marker into invisible zero-width characters.
     
-    Returns (zero_width_string, 8_char_hex_hash).
+    This is a correlation marker, not forensic proof: it can be stripped or
+    copied. The caller must supply a deployment or per-dispatch secret so the
+    marker is not derived from a public hard-coded key.
     """
     import hashlib
     import hmac
-    key = (secret_seed or "squish-leak-tracer").encode("utf-8")
+    if not secret_seed:
+        raise ValueError("a leak-marker secret is required")
+    key = secret_seed.encode("utf-8")
     msg = recipient.strip().lower().encode("utf-8")
-    digest = hmac.new(key, msg, hashlib.sha256).hexdigest()[:8]
+    digest = hmac.new(key, msg, hashlib.sha256).hexdigest()[:32]
     binary = "".join(f"{int(c, 16):04b}" for c in digest)
     chars = ["\uFEFF"]
     for bit in binary:
@@ -1169,7 +1173,7 @@ def _decode_zero_width_tag(text: str) -> str | None:
     """Extract and decode a zero-width hex signature from text string."""
     if not text or "\uFEFF" not in text:
         return None
-    m = re.search(r"\uFEFF([\u200B\u200C]{32})\uFEFF", text)
+    m = re.search(r"\uFEFF([\u200B\u200C]{128})\uFEFF", text)
     if not m:
         return None
     binary = m.group(1)
@@ -1388,8 +1392,15 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
     if sign_requested and len(certificates) != 1:
         raise ToolError("Sign & Dispatch requires one .p12 or .pfx certificate")
 
-    # Forensic steganography and watermark
-    zero_width_str, stego_hash = _encode_zero_width_tag(recipient)
+    # Correlation marker only: it can be stripped or copied and is not
+    # forensic proof. Prefer a stable deployment secret; use a fresh
+    # per-dispatch secret when the deployment did not configure one.
+    marker_secret = (
+        os.environ.get("LEAK_TRACER_SECRET")
+        or os.environ.get("API_KEY")
+        or secrets.token_urlsafe(32)
+    )
+    zero_width_str, stego_hash = _encode_zero_width_tag(recipient, marker_secret)
     watermark_msg = ""
     if p.get("recipient_watermark") in (True, "true", "1", 1):
         today = datetime.date.today().isoformat()
@@ -1447,7 +1458,10 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
     subject = str(p.get("email_subject") or "").strip() or None
     email2_subj = str(p.get("email2_subject") or "").strip() or None
     email2_body_tmpl = str(p.get("email2_body") or "").strip() or None
-    delay_sec = float(p.get("delay_seconds") or 2.5)
+    try:
+        delay_sec = smtp_manager.clamp_dispatch_delay(p.get("delay_seconds") or 2.5)
+    except ValueError as exc:
+        raise ToolError(str(exc))
     thread_emails = p.get("thread_emails") in (True, "true", "1", 1)
     key_delivery_mode = str(p.get("key_delivery_mode") or "email").lower()
 
@@ -1470,7 +1484,7 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
         "recipient": recipient,
         "pdf_file": attachment_names[0],
         "attachments": attachment_names,
-        "password": pw,
+        "password_included": False,
         "step1_sent": True,
         "step2_sent": bool(send_result.get("step2_sent")),
         "key_delivery_mode": key_delivery_mode,
@@ -1486,10 +1500,15 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
     if send_result.get("partial"):
         receipt_data["error"] = send_result.get("error")
         receipt_data["resend"] = {
-            "recipient": recipient, "password": pw,
+            "recipient": recipient,
             "pdf_filename": attachment_names[0], "subject": subject,
             "email2_subject": email2_subj, "email2_body": email2_body_tmpl,
         }
+    if os.environ.get("INCLUDE_PASSWORD_IN_RECEIPT") == "1":
+        receipt_data["password"] = pw
+        receipt_data["password_included"] = True
+        if "resend" in receipt_data:
+            receipt_data["resend"]["password"] = pw
     receipt_file = work / f"{base}_delivery_receipt.json"
     receipt_file.write_text(json.dumps(receipt_data, indent=2), encoding="utf-8")
     return Result(receipt_file, "application/json", receipt_file.name)
@@ -1574,6 +1593,7 @@ def auto_redact(work: Path, inputs: list[Path], p: dict) -> Result:
     for pno in pages:
         page = src[pno]
         text = page.get_text("text")
+        page_hits = 0
         
         # 1. Emails
         if p.get("redact_email"):
@@ -1581,6 +1601,7 @@ def auto_redact(work: Path, inputs: list[Path], p: dict) -> Result:
                 for rect in page.search_for(match, quads=False):
                     page.add_redact_annot(rect, fill=fill)
                     hits += 1
+                    page_hits += 1
                     
         # 2. SSNs (with area code validity check)
         if p.get("redact_ssn"):
@@ -1589,6 +1610,7 @@ def auto_redact(work: Path, inputs: list[Path], p: dict) -> Result:
                     for rect in page.search_for(match, quads=False):
                         page.add_redact_annot(rect, fill=fill)
                         hits += 1
+                        page_hits += 1
                         
         # 3. Phone numbers
         if p.get("redact_phone"):
@@ -1596,6 +1618,7 @@ def auto_redact(work: Path, inputs: list[Path], p: dict) -> Result:
                 for rect in page.search_for(match, quads=False):
                     page.add_redact_annot(rect, fill=fill)
                     hits += 1
+                    page_hits += 1
                     
         # 4. Credit Cards (Luhn algorithm validated)
         if p.get("redact_cc"):
@@ -1604,6 +1627,7 @@ def auto_redact(work: Path, inputs: list[Path], p: dict) -> Result:
                     for rect in page.search_for(match, quads=False):
                         page.add_redact_annot(rect, fill=fill)
                         hits += 1
+                        page_hits += 1
                         
         # 5. IBAN Bank Accounts (ISO Modulo 97-10 validated)
         if p.get("redact_iban"):
@@ -1612,14 +1636,16 @@ def auto_redact(work: Path, inputs: list[Path], p: dict) -> Result:
                     for rect in page.search_for(match, quads=False):
                         page.add_redact_annot(rect, fill=fill)
                         hits += 1
+                        page_hits += 1
 
         # 6. Custom Dictionary Terms
         for term in custom_terms:
             for rect in page.search_for(term, quads=False):
                 page.add_redact_annot(rect, fill=fill)
                 hits += 1
+                page_hits += 1
 
-        if hits > 0:
+        if page_hits > 0:
             page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_PIXELS)
             
     if not hits:
@@ -2330,7 +2356,7 @@ TOOLS: list[Tool] = [
              F("allow_modify", "checkbox", "Allow editing and annotation"),
          ]),
     Tool("email-secure", "Secure Email Dispatch", "Security",
-         "Encrypt and dispatch one or more PDFs, with optional bursting, signing, steganography, and out-of-band key delivery.",
+         "Encrypt and dispatch PDFs with optional bursting, signing, a removable leak marker, and out-of-band key delivery.",
          email_secure, accept=".pdf,.p12,.pfx", multi=True, min_files=1, fields=[
              F("recipient_email", "text", "Recipient email address", required=True,
                placeholder="recipient@example.com", help="Destination inbox for the secure document and password."),
@@ -2356,7 +2382,7 @@ TOOLS: list[Tool] = [
              PAGES,
          ]),
     Tool("auto-redact", "Auto-redact", "Security",
-         "Automatically black out emails, phone numbers, SSNs, credit cards (Luhn-verified), IBANs (Mod-97), or custom dictionary terms.",
+         "Best-effort pattern redaction for text layers. WARNING: scans, split spans, ligatures, and layout can cause misses; always verify the output.",
          auto_redact, accept=".pdf,.txt,.csv", multi=True, fields=[
              F("redact_email", "checkbox", "Redact Emails"),
              F("redact_ssn", "checkbox", "Redact SSNs"),

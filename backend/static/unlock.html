@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>Open secure document · Squish</title>
+  <style>
+    :root{color-scheme:light dark;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:#f4f1eb;color:#171714}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px}
+    main{width:min(520px,100%);background:#fff;border:1px solid #d8d3c9;border-radius:18px;padding:32px;box-shadow:0 18px 60px #332c1d1a}
+    .mark{font-weight:900;letter-spacing:-.05em;font-size:24px}.eyebrow{color:#68635a;font-size:12px;text-transform:uppercase;letter-spacing:.12em;margin:28px 0 8px}
+    h1{font-size:28px;letter-spacing:-.04em;margin:0 0 12px}p{line-height:1.55;color:#5b574f}
+    .key{display:flex;gap:8px;align-items:center;background:#f4f1eb;border:1px solid #d8d3c9;padding:12px;border-radius:10px;margin:20px 0}
+    code{font:700 16px ui-monospace,SFMono-Regular,monospace;overflow-wrap:anywhere;flex:1;color:#171714}
+    button{border:0;background:#171714;color:#fff;border-radius:9px;padding:10px 14px;font-weight:700;cursor:pointer}
+    .gone{color:#a23127}.note{font-size:12px}.hidden{display:none}
+    @media(prefers-color-scheme:dark){:root{background:#171714;color:#f4f1eb}main{background:#23221e;border-color:#47443d}.key{background:#171714;border-color:#47443d}code{color:#f4f1eb}button{background:#f4f1eb;color:#171714}p{color:#bbb5aa}}
+  </style>
+</head>
+<body>
+  <main>
+    <div class="mark">squish.</div>
+    <div class="eyebrow">Single-use secure link</div>
+    <h1 id="title">Opening your key…</h1>
+    <p id="status">This link can be opened only once. Its secret stays in the address fragment and is removed before the server request.</p>
+    <div id="result" class="key hidden"><code id="key"></code><button id="copy" type="button">Copy</button></div>
+    <p class="note">After copying the key, use it to open the encrypted PDF you received separately.</p>
+  </main>
+  <script type="module" src="/unlock-page.mjs"></script>
+</body>
+</html>

@@ -37,6 +37,7 @@ backend/static/vendor/pdf.worker.min.js
 # the static build serves is vendored into backend/static/vendor/pyodide/.
 node_modules/
 package-lock.json
+!cloudflare/package-lock.json
 
 # Generated registry dump -- rewritten on every run of
 # backend/generate_client_tools.py, alongside the tracked client_tools.js.

@@ -17,13 +17,13 @@
   'use strict';
 
   const STORAGE_KEY = 'squish_smtp_vault';
-  const SESSION_PIN_KEY = 'squish_vault_session_pin';
   const HISTORY_STORAGE_KEY = 'squish_dispatch_history';
   const MAX_PROFILES = 5;
   const MAX_TEMPLATES = 20;
   const MAX_TEMPLATE_BYTES = 100 * 1024;
   const MAX_HISTORY_RECORDS = 50;
-  const PBKDF2_ITERATIONS = 100000;
+  const LEGACY_PBKDF2_ITERATIONS = 100000;
+  const PBKDF2_ITERATIONS = 600000;
   const BACKUP_PBKDF2_ITERATIONS = 300000;
   const BACKUP_MAGIC = 'SQUISHVAULT';
   const BACKUP_SCHEMA_VERSION = 1;
@@ -83,8 +83,25 @@
     );
   }
 
-  async function deriveKey(pin, salt) {
-    return deriveKeyWithIterations(pin, salt, PBKDF2_ITERATIONS);
+  async function deriveKey(pin, salt, iterations = PBKDF2_ITERATIONS) {
+    return deriveKeyWithIterations(pin, salt, iterations);
+  }
+
+  function validateMasterPin(pin) {
+    if (typeof pin !== 'string' || pin.length < 6 || /^\d+$/.test(pin)) {
+      throw new Error('Master PIN must be at least 6 characters and include a non-digit');
+    }
+  }
+
+  function sanitizeDnsCheck(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    return {
+      checked_at: boundedString(value.checked_at || '', 'DNS check timestamp', 80),
+      ok: !!value.ok,
+      warnings: Array.isArray(value.warnings)
+        ? value.warnings.slice(0, 8).map(item => boundedString(item, 'DNS warning', 512))
+        : [],
+    };
   }
 
   function vaultPayload(profiles = activeProfiles, templates = activeTemplates) {
@@ -94,9 +111,8 @@
   function cloudHistoryPayload() {
     return (activeHistory || []).map(record => {
       const copy = { ...record };
-      const cloudSecret = copy.encrypted_password?.cloud_plaintext;
       delete copy.encrypted_password;
-      copy.password = typeof cloudSecret === 'string' ? cloudSecret : '';
+      delete copy.password;
       return copy;
     });
   }
@@ -166,6 +182,7 @@
         password: boundedString(item.password, 'SMTP password', 4096, true),
         from_name: boundedString(item.from_name || '', 'sender name', 320),
         security,
+        dns_check: sanitizeDnsCheck(item.dns_check),
         created_at: boundedString(item.created_at || '', 'profile timestamp', 80),
       };
     }), 'profile');
@@ -203,7 +220,7 @@
         message: boundedString(item.message || '', 'history message', 4096),
         error: boundedString(item.error || '', 'history error', 4096),
         password: boundedString(item.password || '', 'history password', 4096),
-        has_password: !!item.password,
+        has_password: !!item.password || !!item.has_password,
       };
     }), 'history');
     return { profiles, templates, history };
@@ -231,9 +248,34 @@
 
     vaultObj.iv = buf2b64(iv);
     vaultObj.ciphertext = buf2b64(ciphertext);
+    vaultObj.schema_version = 3;
+    vaultObj.kdf = { name: 'PBKDF2-SHA256', iterations: PBKDF2_ITERATIONS };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(vaultObj));
     activeProfiles = profiles;
     activeTemplates = templates;
+  }
+
+  async function rewrapLocalHistory(oldKey, newKey) {
+    const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (!raw) return null;
+    const history = JSON.parse(raw);
+    if (!Array.isArray(history)) return null;
+    const enc = new TextEncoder();
+    for (const record of history) {
+      const secret = record?.encrypted_password;
+      if (!secret?.iv || !secret?.ciphertext) continue;
+      const plaintext = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: new Uint8Array(b642buf(secret.iv)) },
+        oldKey,
+        b642buf(secret.ciphertext)
+      );
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ciphertext = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv }, newKey, enc.encode(new TextDecoder().decode(plaintext))
+      );
+      record.encrypted_password = { iv: buf2b64(iv), ciphertext: buf2b64(ciphertext) };
+    }
+    return JSON.stringify(history);
   }
 
   const Vault = {
@@ -258,10 +300,10 @@
       activeTemplates = Array.isArray(source.templates) ? source.templates.map(item => ({ ...item })) : [];
       activeHistory = Array.isArray(source.history) ? source.history.map(item => {
         const copy = { ...item };
-        const password = typeof copy.password === 'string' ? copy.password : '';
+        const hadPassword = typeof copy.password === 'string' && copy.password.length > 0;
         delete copy.password;
-        copy.encrypted_password = password ? { cloud_plaintext: password } : null;
-        copy.has_password = !!password || !!copy.has_password;
+        delete copy.encrypted_password;
+        copy.has_password = hadPassword || !!copy.has_password;
         return copy;
       }) : [];
       cloudSaveHandler = saveHandler;
@@ -283,26 +325,12 @@
 
     async tryAutoUnlock() {
       if (activeMode === 'cloud') return this.isUnlocked();
-      if (this.isUnlocked()) return true;
-      if (!this.isConfigured()) return false;
-      try {
-        if (typeof sessionStorage === 'undefined') return false;
-        const savedPin = sessionStorage.getItem(SESSION_PIN_KEY);
-        if (savedPin) {
-          await this.unlockVault(savedPin);
-          return true;
-        }
-      } catch {
-        try { sessionStorage.removeItem(SESSION_PIN_KEY); } catch {}
-      }
-      return false;
+      return this.isUnlocked();
     },
 
     async initVault(masterPin) {
       activeMode = 'local';
-      if (!masterPin || masterPin.length < 4) {
-        throw new Error('Master PIN must be at least 4 characters');
-      }
+      validateMasterPin(masterPin);
       const salt = crypto.getRandomValues(new Uint8Array(16));
       activeKey = await deriveKey(masterPin, salt);
       activeProfiles = [];
@@ -320,14 +348,11 @@
         salt: buf2b64(salt),
         iv: buf2b64(iv),
         ciphertext: buf2b64(ciphertext),
+        schema_version: 3,
+        kdf: { name: 'PBKDF2-SHA256', iterations: PBKDF2_ITERATIONS },
         created_at: new Date().toISOString()
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(vaultObj));
-      try {
-        if (typeof sessionStorage !== 'undefined') {
-          sessionStorage.setItem(SESSION_PIN_KEY, masterPin);
-        }
-      } catch {}
       return true;
     },
 
@@ -336,12 +361,16 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) throw new Error('No vault configured');
       const vaultObj = JSON.parse(raw);
+      const iterations = Number(vaultObj?.kdf?.iterations || LEGACY_PBKDF2_ITERATIONS);
+      if (![LEGACY_PBKDF2_ITERATIONS, PBKDF2_ITERATIONS].includes(iterations)) {
+        throw new Error('Unsupported vault key-derivation settings');
+      }
       const salt = b642buf(vaultObj.salt);
       const iv = b642buf(vaultObj.iv);
       const ciphertext = b642buf(vaultObj.ciphertext);
 
       try {
-        const key = await deriveKey(masterPin, salt);
+        const key = await deriveKey(masterPin, salt, iterations);
         const decrypted = await crypto.subtle.decrypt(
           { name: 'AES-GCM', iv: new Uint8Array(iv) },
           key,
@@ -359,21 +388,25 @@
           throw new Error('Unsupported vault schema');
         }
         activeKey = key;
-        try {
-          if (typeof sessionStorage !== 'undefined') {
-            sessionStorage.setItem(SESSION_PIN_KEY, masterPin);
+        if (iterations !== PBKDF2_ITERATIONS) {
+          const upgradedSalt = crypto.getRandomValues(new Uint8Array(16));
+          const upgradedKey = await deriveKey(masterPin, upgradedSalt, PBKDF2_ITERATIONS);
+          const upgradedHistory = await rewrapLocalHistory(key, upgradedKey);
+          activeKey = upgradedKey;
+          vaultObj.salt = buf2b64(upgradedSalt);
+          vaultObj.schema_version = 3;
+          vaultObj.kdf = { name: 'PBKDF2-SHA256', iterations: PBKDF2_ITERATIONS };
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(vaultObj));
+          await commitVault(activeProfiles, activeTemplates);
+          if (upgradedHistory !== null) {
+            localStorage.setItem(HISTORY_STORAGE_KEY, upgradedHistory);
           }
-        } catch {}
+        }
         return true;
       } catch (err) {
         activeKey = null;
         activeProfiles = null;
         activeTemplates = null;
-        try {
-          if (typeof sessionStorage !== 'undefined') {
-            sessionStorage.removeItem(SESSION_PIN_KEY);
-          }
-        } catch {}
         throw new Error('Incorrect Master PIN');
       }
     },
@@ -386,11 +419,6 @@
       activeKey = null;
       activeProfiles = null;
       activeTemplates = null;
-      try {
-        if (typeof sessionStorage !== 'undefined') {
-          sessionStorage.removeItem(SESSION_PIN_KEY);
-        }
-      } catch {}
     },
 
     wipeAll() {
@@ -401,11 +429,6 @@
       activeKey = null;
       activeProfiles = null;
       activeTemplates = null;
-      try {
-        if (typeof sessionStorage !== 'undefined') {
-          sessionStorage.removeItem(SESSION_PIN_KEY);
-        }
-      } catch {}
     },
 
     async wipeCloudVault() {
@@ -436,6 +459,7 @@
         password: '••••••••',
         from_name: p.from_name || '',
         security: p.security || 'starttls',
+        dns_check: sanitizeDnsCheck(p.dns_check),
         created_at: p.created_at
       }));
     },
@@ -468,6 +492,7 @@
         password: profileData.password, // Stored encrypted inside the blob
         from_name: profileData.from_name?.trim() || '',
         security: profileData.security || (parseInt(profileData.port, 10) === 465 ? 'ssl' : 'starttls'),
+        dns_check: null,
         created_at: new Date().toISOString()
       };
 
@@ -487,6 +512,19 @@
 
       await commitVault(activeProfiles);
       return true;
+    },
+
+    async saveDeliverabilityResult(profileId, result) {
+      if (!activeProfiles) throw new Error('Vault is locked');
+      const idx = activeProfiles.findIndex(p => p.id === profileId);
+      if (idx === -1) throw new Error('Profile not found');
+      activeProfiles[idx].dns_check = sanitizeDnsCheck({
+        checked_at: new Date().toISOString(),
+        ok: !!result?.ok,
+        warnings: Array.isArray(result?.warnings) ? result.warnings : [result?.error || 'DNS check failed'],
+      });
+      await commitVault(activeProfiles);
+      return activeProfiles[idx].dns_check;
     },
 
     // Replace password explicitly
@@ -766,7 +804,7 @@
     async addDispatchRecord({ recipient, pdf_filename, attachments, subject, status, password, message, error, phone, pages, key_delivery_mode, signed }) {
       const history = this.getDispatchHistory();
       let encryptedPassword = null;
-      if (password && this.isUnlocked()) {
+      if (password && this.isUnlocked() && activeMode !== 'cloud') {
         try {
           encryptedPassword = await this.encryptSecret(password);
         } catch {}
@@ -805,6 +843,9 @@
     async revealDispatchPassword(recordId) {
       if (!this.isUnlocked()) {
         throw new Error('Vault is locked. Enter Master PIN to view password.');
+      }
+      if (activeMode === 'cloud') {
+        throw new Error('Cloud history records whether a key existed but never stores the key itself.');
       }
       const history = this.getDispatchHistory();
       const rec = history.find(r => r.id === recordId);

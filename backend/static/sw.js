@@ -8,8 +8,12 @@
 //   * other static GETs   -> stale-while-revalidate (fast, but self-updating)
 //   * /api/* and /vendor/ -> always network (never cached)
 // and every deploy bumps CACHE so old entries are dropped on activate.
-const CACHE = 'squish-v13';
-const FALLBACK = ['/', '/index.html', '/favicon.svg', '/manifest.json', '/vault.js', '/vendor/qrcode-generator.js'];
+const CACHE = 'squish-v14';
+const FALLBACK = [
+  '/', '/index.html', '/unlock.html', '/favicon.svg', '/manifest.json',
+  '/vault.js', '/burner-links.mjs', '/unlock-page.mjs',
+  '/vendor/qrcode-generator.js'
+];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FALLBACK)).then(() => self.skipWaiting()));

@@ -7,8 +7,9 @@
 <meta name="description" content="Merge, split, compress, convert, OCR, protect and redact PDFs. Runs entirely on your own hardware; files are deleted the moment the download finishes.">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/manifest.json">
-<script src="/vault.js?v=1.7.0-squish"></script>
-<script src="/vendor/qrcode-generator.js?v=1.7.0-squish"></script>
+<script src="/vault.js?v=2.0.1-squish"></script>
+<script src="/vendor/qrcode-generator.js?v=2.0.1-squish"></script>
+<script type="module" src="/burner-links.mjs?v=2.0.1-squish"></script>
 
 <style>
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
@@ -1130,13 +1131,13 @@ footer code { font-family:var(--font-mono); }
         <h4 id="vaultPinTitle">Enter Master PIN</h4>
         <p id="vaultPinDesc">Your SMTP parameters are encrypted locally in your browser with AES-256-GCM. Enter your PIN to unlock.</p>
         <form id="vaultPinForm" onsubmit="handleVaultPinSubmit(event)">
-          <input type="password" id="vaultPinInput" class="vault-pin-input" placeholder="••••" maxlength="12" autocomplete="off" required>
+          <input type="password" id="vaultPinInput" class="vault-pin-input" placeholder="6+ characters, including a non-digit" minlength="6" maxlength="64" autocomplete="off" required>
           <!-- Only shown when creating a NEW vault -- there is no "forgot PIN"
                recovery (the whole point is the server never sees it), so a
                typo here would silently lock the person out of their own
                saved credentials. Re-entering it catches that before it's
                encrypted. Hidden (and not required) when just unlocking. -->
-          <input type="password" id="vaultPinConfirmInput" class="vault-pin-input" placeholder="Confirm PIN" maxlength="12" autocomplete="off" hidden style="margin-top:10px;">
+          <input type="password" id="vaultPinConfirmInput" class="vault-pin-input" placeholder="Confirm PIN" minlength="6" maxlength="64" autocomplete="off" hidden style="margin-top:10px;">
           <p id="vaultPinMismatch" class="hint" style="color:var(--color-err); margin-top:6px;" hidden>PINs don't match.</p>
           <div style="margin-top:14px; display:flex; gap:8px; justify-content:center;">
             <button type="submit" class="btn--primary" id="vaultPinSubmitBtn">Unlock Vault</button>
@@ -1225,7 +1226,7 @@ footer code { font-family:var(--font-mono); }
       <div id="vaultServerPane" hidden style="display:flex; flex-direction:column; gap:16px;">
         <div class="vault-add-box">
           <h4 style="margin:0 0 4px;">Server API Key</h4>
-          <p class="hint" style="margin:0 0 10px;">Server-side profiles live in this server's <code>.env</code> file, which only opens up once <code>API_KEY</code> is set as an environment variable <em>on the server itself</em> — this page has no way to set that for you, since it's not something a browser can reach into. Three steps: pick a key, put it in the server's environment and restart it, then save that same value here.</p>
+          <p class="hint" style="margin:0 0 10px;">Server-side profiles live in this server's <code>.env</code> file, which only opens up once <code>API_KEY</code> is set as an environment variable <em>on the server itself</em> — this page has no way to set that for you, since it's not something a browser can reach into. Three steps: pick a key, put it in the server's environment and restart it, then enter that same value here for this page session.</p>
 
           <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
             <span style="font-size:11px; font-weight:700; color:var(--color-accent-solid); background:var(--color-panel); border:1px solid var(--color-rule); border-radius:999px; padding:2px 8px;">Step 1</span>
@@ -1260,7 +1261,7 @@ footer code { font-family:var(--font-mono); }
 
           <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
             <button type="button" class="vpc-btn" onclick="clearApiKey()">Clear</button>
-            <button type="button" class="btn--primary" onclick="saveApiKeyFromInput()">Save Key</button>
+            <button type="button" class="btn--primary" onclick="saveApiKeyFromInput()">Use Key</button>
           </div>
           <div id="vaultApiKeyStatus" style="font-size:12px; font-family:var(--font-mono); margin-top:6px;"></div>
         </div>
@@ -1350,16 +1351,17 @@ footer code { font-family:var(--font-mono); }
 
 /* ---------------------------------------------------------- API key --- */
 // Only relevant if this deployment sets the API_KEY env var (see README).
-// When set, the server requires X-API-Key on every /api/* request except
-// /api/health -- this key is what lets the page itself keep working, and
+// When set, the server requires X-API-Key on every private /api/* request
+// (health and runtime discovery stay public) -- this key keeps the page working, and
 // what lets the server-side .env SMTP profile endpoints (which ALWAYS
 // require API_KEY, regardless of whether the rest of the API is gated)
-// be reachable at all. Stored in localStorage: it's the operator's own key
-// for their own server, entered once, same trust model as any other
-// self-hosted admin tool.
+// be reachable at all. Keep it in memory only: persisting an admin credential
+// in Web Storage would make it available to any later script running here.
 const API_KEY_STORAGE = 'squish_api_key';
-function getApiKey(){ try{ return localStorage.getItem(API_KEY_STORAGE) || ''; }catch{ return ''; } }
-function setApiKey(k){ try{ if(k) localStorage.setItem(API_KEY_STORAGE, k); else localStorage.removeItem(API_KEY_STORAGE); }catch{} }
+let runtimeApiKey = '';
+try{ localStorage.removeItem(API_KEY_STORAGE); sessionStorage.removeItem(API_KEY_STORAGE); }catch{}
+function getApiKey(){ return runtimeApiKey; }
+function setApiKey(k){ runtimeApiKey = String(k || ''); }
 function apiHeaders(extra){
   const key = getApiKey();
   return key ? { ...(extra||{}), 'X-API-Key': key } : (extra || {});
@@ -1417,13 +1419,13 @@ function applyRuntimeUI(){
     profilesTitle.textContent = 'Cloud Vault Profiles';
     lockBtn.hidden = true;
     backupTitle.textContent = 'Encrypted Cloud Vault Backup';
-    backupDesc.textContent = 'Export a portable backup protected by a separate 12+ character passphrase. The Cloud Vault remains encrypted at rest.';
-    encryptionLabel.textContent = 'Encrypted in Cloudflare D1 with AES-256-GCM';
+    backupDesc.textContent = 'Export a portable backup protected by a separate 12+ character passphrase. The Cloud Vault is encrypted at rest with a server-held key.';
+    encryptionLabel.textContent = 'Encrypted at rest with a server-held AES-256-GCM key';
     wipeBtn.textContent = 'Delete Cloud Vault';
     document.getElementById('heroTitle').innerHTML = 'Every PDF tool.<br>Your files stay private.';
     document.getElementById('heroSubtitle').innerHTML = 'Process PDFs in your browser and keep SMTP credentials in an encrypted vault tied to your Google account. Secure email sends only through the SMTP account you choose.';
     document.getElementById('accountFactTitle').textContent = 'Account vault';
-    document.getElementById('accountFactText').textContent = 'Google sign-in unlocks your encrypted Cloud Vault across your devices.';
+    document.getElementById('accountFactText').textContent = 'Google sign-in authorizes access. The Cloudflare deployment can decrypt this vault; use Browser Vault for user-held encryption.';
   } else {
     document.getElementById('vaultTabBrowserBtn').textContent = 'Browser Vault';
     profilesTitle.textContent = 'Configured Profiles';
@@ -2715,8 +2717,8 @@ function buildSecureEmailFields(box){
   profField.innerHTML = `
     <label for="f_smtp_profile_select">SMTP Account / Relay</label>
     <select id="f_smtp_profile_select">
-      ${profiles.map(p => `<option value="${p.id}">Saved (browser): ${p.name} (${p.username})</option>`).join('')}
-      ${serverProfiles.map(p => `<option value="server:${p.id}">Saved (server): ${p.name} (${p.username})</option>`).join('')}
+      ${profiles.map(p => `<option value="${escapeHtml(p.id)}">Saved (browser): ${escapeHtml(p.name)} (${escapeHtml(p.username)})</option>`).join('')}
+      ${serverProfiles.map(p => `<option value="server:${escapeHtml(p.id)}">Saved (server): ${escapeHtml(p.name)} (${escapeHtml(p.username)})</option>`).join('')}
       <option value="__manual__"${anyProfiles ? '' : ' selected'}>Manual / One-Time SMTP Parameters</option>
     </select>
     <span class="hint">Credentials are transmitted strictly for this dispatch and never stored in plain text.</span>
@@ -3170,8 +3172,9 @@ captain777@gmail.com,Steve Rogers,Shield maintenance schedule`;
         <option value="email">Email #2</option>
         <option value="oob">Out-of-band only (no Email #2)</option>
         <option value="dual">Email #2 + out-of-band actions</option>
+        <option value="burner" ${isStatic ? '' : 'disabled'}>Single-use unlock link (hosted)</option>
       </select>
-      <span class="hint">Out-of-band actions are generated only after an explicit click and require an unlocked Browser Vault to reveal saved passwords.</span>
+      <span class="hint">Single-use links expire after 24 hours. The link secret stays in your browser and must be shared separately from the encrypted PDF.</span>
     </div>
     <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
       <label>Email #2 Customization & Delivery Timing</label>
@@ -3329,7 +3332,7 @@ function ingest(list, silent){
           updateEmailPreview();
         }
         const dropLabel = document.getElementById('secHtmlDropLabel');
-        if(dropLabel) dropLabel.innerHTML = `Loaded <b>${hf.name}</b> (${fmt(hf.size)})`;
+        if(dropLabel) dropLabel.textContent = `Loaded ${hf.name} (${fmt(hf.size)})`;
         toast(`Loaded HTML template: ${hf.name}`, 'ok');
       };
       reader.readAsText(hf);
@@ -3620,6 +3623,7 @@ async function submit(){
   if(SLOW.has(current.key)){ slowNote.hidden = false; slowNote.textContent = 'This tool runs a heavier engine — larger files can take a little while.'; }
 
   const fd = new FormData();
+  let submittedDispatchPassword = '';
   for(const f of files) fd.append('files', f, f.name);
   
   if(current.key === 'email-secure'){
@@ -3731,9 +3735,13 @@ async function submit(){
     fd.append('password_mode', pwMode);
     if(pwMode === 'random'){
       fd.append('custom_password', generatedPassword);
+      submittedDispatchPassword = generatedPassword;
     }else{
       const custPw = document.getElementById('f_custom_password');
-      if(custPw && custPw.value) fd.append('custom_password', custPw.value);
+      if(custPw && custPw.value){
+        fd.append('custom_password', custPw.value);
+        submittedDispatchPassword = custPw.value;
+      }
     }
   }else{
     for(const f of current.fields){
@@ -3744,7 +3752,7 @@ async function submit(){
   }
 
   try{
-    let blob, name, isDeliveryReceipt = false, receiptObj = null;
+    let blob, name, storageMode = '', outputVerifiedText = '', isDeliveryReceipt = false, receiptObj = null;
     if(isStatic) {
       if(current.key === 'email-secure'){
         if(!window.runStaticSecureEmail) throw new Error("The Cloudflare email worker is still loading — try again in a moment.");
@@ -3755,6 +3763,8 @@ async function submit(){
         const result = await window.runPyodideTool(current.key, files, fd);
         blob = result.blob;
         name = result.name || (current.key + '.out');
+        storageMode = result.storage || '';
+        outputVerifiedText = result.verifiedText || '';
       }
     } else {
       const r = await fetch('/api/t/' + current.key, {method:'POST', body:fd, headers: apiHeaders()});
@@ -3777,6 +3787,10 @@ async function submit(){
       }
     }
 
+    if(isDeliveryReceipt && receiptObj && !receiptObj.password){
+      receiptObj.password = submittedDispatchPassword;
+      if(receiptObj.resend && !receiptObj.resend.password) receiptObj.resend.password = submittedDispatchPassword;
+    }
     const secs = ((Date.now() - t0) / 1000).toFixed(1);
     res.className = 'result on';
 
@@ -3812,20 +3826,32 @@ async function submit(){
         }).then(() => renderDispatchHistoryTable()).catch(()=>{});
       }
     } else if(isDeliveryReceipt && receiptObj){
-      const deliveryTitle = receiptObj.key_delivery_mode === 'oob' ? 'Encrypted document dispatched — deliver key out of band' : 'Secure delivery completed';
+      const isBurner = receiptObj.key_delivery_mode === 'burner';
+      const deliveryTitle = isBurner
+        ? (receiptObj.burner_url ? 'Encrypted document dispatched — single-use link ready' : 'Encrypted document dispatched — link creation failed')
+        : (receiptObj.key_delivery_mode === 'oob' ? 'Encrypted document dispatched — deliver key out of band' : 'Secure delivery completed');
+      const keyRow = isBurner ? (receiptObj.burner_url
+        ? `<div style="display:flex;align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap"><strong>Single-use link:</strong><code style="font-family:var(--font-mono);overflow-wrap:anywhere;flex:1;min-width:180px">${escapeHtml(receiptObj.burner_url)}</code><button type="button" class="sec-btn-icon receipt-copy-burner" title="Copy single-use link">${svg(UI.copy)}</button><button type="button" class="btn-sm receipt-share-burner">Share</button></div><small>Expires ${escapeHtml(new Date(receiptObj.burner_expires_at).toLocaleString())}. Do not send it in the same message as the PDF.</small>`
+        : `<div style="color:var(--color-err)"><strong>Link creation failed:</strong> ${escapeHtml(receiptObj.burner_error || 'unknown error')}. Copy the decryption key and deliver it out of band.</div><div style="display:flex;align-items:center;gap:8px"><strong>Decryption Key:</strong><code style="font-family:var(--font-mono);font-weight:700">${escapeHtml(receiptObj.password)}</code><button type="button" class="sec-btn-icon receipt-copy-password" title="Copy password">${svg(UI.copy)}</button></div>`)
+        : `<div style="display:flex; align-items:center; gap:8px; margin-top:4px;"><strong>Decryption Key:</strong><code style="font-family:var(--font-mono); font-weight:700; background:var(--color-panel); padding:3px 8px; border-radius:5px; border:1px solid var(--color-rule);">${escapeHtml(receiptObj.password)}</code><button type="button" class="sec-btn-icon receipt-copy-password" title="Copy password">${svg(UI.copy)}</button></div>`;
       res.innerHTML =
         `<div class="r-top"><span class="r-check">${svg(UI.check)}</span><div><b>${deliveryTitle}</b><small>Completed in ${secs}s</small></div></div>`+
         `<div style="margin:14px 0; padding:14px; background:var(--color-paper); border:1px solid var(--color-rule); border-radius:8px; font-size:13px; display:flex; flex-direction:column; gap:6px;">`+
         `<div><strong>Recipient:</strong> <code style="font-family:var(--font-mono);">${escapeHtml(receiptObj.recipient)}</code></div>`+
         `<div><strong>Attached PDF:</strong> <code style="font-family:var(--font-mono);">${escapeHtml(receiptObj.pdf_file)}</code></div>`+
-        `<div style="display:flex; align-items:center; gap:8px; margin-top:4px;">`+
-        `<strong>Decryption Key:</strong> <code style="font-family:var(--font-mono); font-weight:700; background:var(--color-panel); padding:3px 8px; border-radius:5px; border:1px solid var(--color-rule);">${escapeHtml(receiptObj.password)}</code>`+
-        `<button type="button" class="sec-btn-icon receipt-copy-password" title="Copy password">${svg(UI.copy)}</button>`+
-        `</div>`+
+        keyRow+
         `</div>`+
         `<div class="r-actions"><button type="button" class="r-again" onclick="resetTool()">Send another</button></div>`;
-      res.querySelector('.receipt-copy-password').onclick = () => navigator.clipboard.writeText(String(receiptObj.password || '')).then(() => toast('Password copied','ok'));
-      toast(`Delivered dual secure emails to ${receiptObj.recipient}`, 'ok');
+      const copyPassword = res.querySelector('.receipt-copy-password');
+      if(copyPassword) copyPassword.onclick = () => navigator.clipboard.writeText(String(receiptObj.password || '')).then(() => toast('Password copied','ok'));
+      const copyBurner = res.querySelector('.receipt-copy-burner');
+      if(copyBurner) copyBurner.onclick = () => navigator.clipboard.writeText(receiptObj.burner_url).then(() => toast('Single-use link copied','ok'));
+      const shareBurner = res.querySelector('.receipt-share-burner');
+      if(shareBurner) shareBurner.onclick = async () => {
+        if(navigator.share) await navigator.share({title:'Squish secure document key', text:'Open this link once to retrieve the decryption key:', url:receiptObj.burner_url});
+        else await navigator.clipboard.writeText(receiptObj.burner_url);
+      };
+      toast(isBurner && receiptObj.burner_url ? 'Encrypted PDF delivered; single-use link ready' : `Secure delivery completed for ${receiptObj.recipient}`, receiptObj.burner_error ? 'err' : 'ok');
       if(window.SquishVault){
         SquishVault.addDispatchRecord({
           recipient: receiptObj.recipient,
@@ -3845,7 +3871,9 @@ async function submit(){
         `<div class="r-top"><span class="r-check">${svg(UI.check)}</span><div><b>Done in ${secs}s</b><small></small></div></div>`+
         `<div class="r-actions"><a class="r-download" download>${svg(UI.download)}<span>Download file</span></a>`+
         `<button type="button" class="r-again">Process another</button></div>`;
-      res.querySelector('small').textContent = `${name} · ${fmt(blob.size)}`;
+      const verification = outputVerifiedText ? ' · text layer and pixels verified' : '';
+      const storageNote = storageMode === 'opfs' ? ' · private disk cleaned' : '';
+      res.querySelector('small').textContent = `${name} · ${fmt(blob.size)}${verification}${storageNote}`;
       const a = res.querySelector('a.r-download'); a.href = url; a.download = name;
       a.setAttribute('aria-label', `Download ${name}, ${fmt(blob.size)}`);
       res.querySelector('.r-again').onclick = () => resetTool();
@@ -4191,8 +4219,8 @@ function saveApiKeyFromInput(){
   setApiKey(el.value.trim());
   const status = document.getElementById('vaultApiKeyStatus');
   status.style.color = 'var(--color-ok-solid)';
-  status.textContent = getApiKey() ? 'Saved locally — this key will be sent on every request from now on. Checking against the server…' : 'Cleared.';
-  toast(getApiKey() ? 'API key saved' : 'API key cleared', 'ok');
+  status.textContent = getApiKey() ? 'Kept in memory for this page — it will be sent on requests until you reload or close the tab. Checking against the server…' : 'Cleared.';
+  toast(getApiKey() ? 'API key active for this page' : 'API key cleared', 'ok');
   loadServerProfiles();
   if(current && current.key === 'email-secure') buildFields();
 }
@@ -4258,25 +4286,65 @@ function renderServerProfiles(){
     card.className = 'vault-profile-card';
     card.innerHTML = `
       <div class="vpc-head">
-        <b>${p.name}</b>
+        <b>${escapeHtml(p.name)}</b>
         <div style="display:flex; gap:6px;">
           <button type="button" class="vpc-btn" onclick="testServerProfile(${p.id})">Test</button>
           <button type="button" class="vpc-btn" style="color:var(--color-err);" onclick="handleDeleteServerProfile(${p.id})">Delete</button>
         </div>
       </div>
       <div class="vpc-grid">
-        <div class="vpc-item"><span>Server</span><code>${p.server}:${p.port}</code></div>
-        <div class="vpc-item"><span>Username</span><code>${p.username}</code></div>
-        <div class="vpc-item"><span>Password</span><code>${p.password || '(none)'}</code></div>
+        <div class="vpc-item"><span>Server</span><code>${escapeHtml(p.server)}:${escapeHtml(p.port)}</code></div>
+        <div class="vpc-item"><span>Username</span><code>${escapeHtml(p.username)}</code></div>
+        <div class="vpc-item"><span>Password</span><code>${escapeHtml(p.password || '(none)')}</code></div>
         <div class="vpc-item">
           <span>Display Name (Editable)</span>
-          <input type="text" value="${p.from_name || ''}" placeholder="None" style="padding:2px 6px; font-size:12px; border:1px solid var(--color-rule); border-radius:4px; background:var(--color-panel);" onchange="updateServerProfileMeta(${p.id}, this.value)">
+          <input type="text" value="${escapeHtml(p.from_name || '')}" placeholder="None" style="padding:2px 6px; font-size:12px; border:1px solid var(--color-rule); border-radius:4px; background:var(--color-panel);" onchange="updateServerProfileMeta(${p.id}, this.value)">
         </div>
       </div>
       <div id="serverTestStatus_${p.id}" style="font-size:11.5px; font-family:var(--font-mono); margin-top:2px;" hidden></div>
     `;
     list.append(card);
   });
+}
+
+function renderSmtpDiagnostic(statEl, result){
+  if(!statEl) return;
+  const res = result || {};
+  statEl.hidden = false;
+  statEl.style.color = 'var(--color-err)';
+  statEl.replaceChildren();
+
+  const summary = document.createElement('div');
+  summary.textContent = '✗ ' + (res.error || res.detail || 'SMTP connection failed');
+  statEl.append(summary);
+
+  if(res.hint){
+    const hint = document.createElement('div');
+    hint.style.cssText = 'margin-top:4px; color:var(--color-ink-muted); font-family:var(--font-body); line-height:1.4;';
+    hint.textContent = res.hint;
+    statEl.append(hint);
+  }
+
+  const fields = [
+    ['Stage', res.stage],
+    ['Category', res.category],
+    ['SMTP code', res.smtp_code],
+    ['Relay response', res.relay_response],
+    ['Diagnostic ID', res.diagnostic_id],
+  ].filter(([, value]) => value !== undefined && value !== null && value !== '');
+  if(fields.length){
+    const details = document.createElement('details');
+    details.style.cssText = 'margin-top:6px; color:var(--color-ink-muted);';
+    const label = document.createElement('summary');
+    label.style.cursor = 'pointer';
+    label.textContent = 'Technical details';
+    details.append(label);
+    const body = document.createElement('div');
+    body.style.cssText = 'margin-top:4px; white-space:pre-wrap; overflow-wrap:anywhere;';
+    body.textContent = fields.map(([name, value]) => `${name}: ${value}`).join('\n');
+    details.append(body);
+    statEl.append(details);
+  }
 }
 
 async function testServerProfile(id){
@@ -4290,10 +4358,14 @@ async function testServerProfile(id){
     const res = await r.json();
     if(statEl){
       if(r.ok && res.ok){ statEl.style.color = 'var(--color-ok-solid)'; statEl.textContent = '✓ Connected successfully'; toast('SMTP connection verified!', 'ok'); }
-      else { statEl.style.color = 'var(--color-err)'; statEl.textContent = '✗ ' + (res.error || res.detail || 'Connection failed'); toast('SMTP connection failed', 'err'); }
+      else { renderSmtpDiagnostic(statEl, res); toast(res.error || 'SMTP connection failed', 'err'); }
     }
   }catch(e){
-    if(statEl){ statEl.style.color = 'var(--color-err)'; statEl.textContent = '✗ ' + e.message; }
+    renderSmtpDiagnostic(statEl, {
+      stage: 'browser_request', category: 'request_failed',
+      error: e.message || 'The browser could not reach the SMTP test endpoint.',
+      hint: 'Check that Squish is online and that your session or API key is valid.'
+    });
   }
 }
 
@@ -4358,8 +4430,8 @@ async function handleWipeServerProfiles(){
 async function handleVaultPinSubmit(e){
   e.preventDefault();
   const pin = document.getElementById('vaultPinInput').value.trim();
-  if(!pin || pin.length < 4){
-    toast('Master PIN must be at least 4 characters', 'err');
+  if(!pin || pin.length < 6 || /^\d+$/.test(pin)){
+    toast('Master PIN must be at least 6 characters and include a non-digit', 'err');
     return;
   }
   
@@ -4429,54 +4501,52 @@ function renderVaultProfiles(){
   
   profiles.forEach(p => {
     const card = document.createElement('div'); card.className = 'vault-profile-card';
+    const dnsCheck = p.dns_check;
+    const dnsLabel = dnsCheck ? (dnsCheck.ok && !(dnsCheck.warnings || []).length ? 'DNS ✓' : 'DNS ⚠') : 'Check DNS';
+    const dnsTitle = dnsCheck
+      ? `${(dnsCheck.warnings || []).join('\n') || 'SPF and DMARC checks passed'}\nLast checked: ${dnsCheck.checked_at || 'unknown'}`
+      : 'Queries Cloudflare DNS over HTTPS for this sender domain only when clicked.';
     card.innerHTML = `
       <div class="vpc-head">
         <span class="vpc-title">
-          <span>${p.name}</span>
-          <span class="badge">${p.security.toUpperCase()}</span>
-          <span id="dnsBadge_${p.id}" class="badge" style="cursor:help; font-size:11px;" title="Checking DNS deliverability (SPF/DMARC)...">DNS ...</span>
+          <span>${escapeHtml(p.name)}</span>
+          <span class="badge">${escapeHtml(p.security.toUpperCase())}</span>
+          <button type="button" id="dnsBadge_${escapeHtml(p.id)}" class="badge" style="cursor:pointer; font-size:11px; border:0;" title="${escapeHtml(dnsTitle)}" onclick="checkSavedProfileDns('${escapeHtml(p.id)}')">${escapeHtml(dnsLabel)}</button>
         </span>
         <div style="display:flex; gap:6px;">
-          <button type="button" class="vpc-btn" onclick="testSavedProfile('${p.id}')">Test</button>
-          <button type="button" class="vpc-btn danger" onclick="deleteSavedProfile('${p.id}')">${svg(UI.trash)}</button>
+          <button type="button" class="vpc-btn" onclick="testSavedProfile('${escapeHtml(p.id)}')">Test</button>
+          <button type="button" class="vpc-btn danger" onclick="deleteSavedProfile('${escapeHtml(p.id)}')">${svg(UI.trash)}</button>
         </div>
       </div>
       <div class="vpc-grid">
-        <div class="vpc-item"><span>Server & Port</span><b>${p.server}:${p.port}</b></div>
-        <div class="vpc-item"><span>Sender Email</span><b>${p.username}</b></div>
+        <div class="vpc-item"><span>Server & Port</span><b>${escapeHtml(p.server)}:${escapeHtml(p.port)}</b></div>
+        <div class="vpc-item"><span>Sender Email</span><b>${escapeHtml(p.username)}</b></div>
         <div class="vpc-item"><span>Password</span><b>••••••••</b></div>
         <div class="vpc-item">
           <span>Display Name (Editable)</span>
-          <input type="text" value="${p.from_name || ''}" placeholder="None" style="padding:2px 6px; font-size:12px; border:1px solid var(--color-rule); border-radius:4px; background:var(--color-panel);" onchange="updateSavedProfileMeta('${p.id}', this.value)">
+          <input type="text" value="${escapeHtml(p.from_name || '')}" placeholder="None" style="padding:2px 6px; font-size:12px; border:1px solid var(--color-rule); border-radius:4px; background:var(--color-panel);" onchange="updateSavedProfileMeta('${escapeHtml(p.id)}', this.value)">
         </div>
       </div>
       <div id="testStatus_${p.id}" style="font-size:11.5px; font-family:var(--font-mono); margin-top:2px;" hidden></div>
     `;
     list.append(card);
 
-    // Asynchronously perform DNS preflight check
-    SquishVault.lintDomainDeliverability(p).then(res => {
-      const badge = document.getElementById('dnsBadge_' + p.id);
-      if(!badge) return;
-      if(res.ok){
-        if(res.warnings && res.warnings.length > 0){
-          badge.style.background = 'var(--color-warn)';
-          badge.style.color = '#fff';
-          badge.textContent = 'DNS ⚠';
-          badge.title = res.warnings.join('\n');
-        } else {
-          badge.style.background = 'var(--color-ok-solid)';
-          badge.style.color = '#fff';
-          badge.textContent = 'DNS ✓';
-          badge.title = `SPF & DMARC (p=${res.dmarc_policy}) verified for ${res.domain}`;
-        }
-      } else {
-        badge.style.background = 'var(--color-rule-2)';
-        badge.textContent = 'DNS ?';
-        badge.title = res.error || 'DNS check unavailable';
-      }
-    }).catch(() => {});
   });
+}
+
+async function checkSavedProfileDns(profileId){
+  const badge = document.getElementById('dnsBadge_' + profileId);
+  if(badge){ badge.disabled = true; badge.textContent = 'Checking…'; }
+  try{
+    const profile = SquishVault.getProfileForDispatch(profileId);
+    const result = await SquishVault.lintDomainDeliverability(profile);
+    await SquishVault.saveDeliverabilityResult(profileId, result);
+    renderVaultProfiles();
+    toast(result.ok ? 'DNS check complete' : (result.error || 'DNS check failed'), result.ok ? 'ok' : 'err');
+  }catch(err){
+    if(badge){ badge.disabled = false; badge.textContent = 'Check DNS'; }
+    toast(err.message || 'DNS check failed', 'err');
+  }
 }
 
 async function testSavedProfile(profileId){
@@ -4500,15 +4570,17 @@ async function testSavedProfile(profileId){
         statEl.textContent = '✓ Connected successfully';
         toast('SMTP connection verified!', 'ok');
       } else {
-        statEl.style.color = 'var(--color-err)';
-        statEl.textContent = '✗ ' + (res.error || 'Connection failed');
-        toast('SMTP connection failed: ' + (res.error || 'Unknown error'), 'err');
+        renderSmtpDiagnostic(statEl, res);
+        toast(res.error || 'SMTP connection failed', 'err');
       }
     }
   }catch(err){
     if(statEl){
-      statEl.style.color = 'var(--color-err)';
-      statEl.textContent = '✗ ' + err.message;
+      renderSmtpDiagnostic(statEl, {
+        stage: 'browser_request', category: 'request_failed',
+        error: err.message || 'The browser could not reach the SMTP test endpoint.',
+        hint: 'Check that Squish is online and that your session or API key is valid.'
+      });
     }
     toast('Test error: ' + err.message, 'err');
   }
@@ -4545,13 +4617,15 @@ async function handleTestNewProfile(){
       statEl.textContent = '✓ ' + res.message;
       toast('Connection test successful!', 'ok');
     } else {
-      statEl.style.color = 'var(--color-err)';
-      statEl.textContent = '✗ ' + (res.error || 'Connection failed');
-      toast('Connection failed: ' + (res.error || 'Check credentials'), 'err');
+      renderSmtpDiagnostic(statEl, res);
+      toast(res.error || 'SMTP connection failed', 'err');
     }
   }catch(err){
-    statEl.style.color = 'var(--color-err)';
-    statEl.textContent = '✗ ' + err.message;
+    renderSmtpDiagnostic(statEl, {
+      stage: 'browser_request', category: 'request_failed',
+      error: err.message || 'The browser could not reach the SMTP test endpoint.',
+      hint: 'Check that Squish is online and that your session or API key is valid.'
+    });
   }
 }
 
@@ -4638,6 +4712,7 @@ function renderDispatchHistoryTable(){
   }
   
   const isUnlocked = SquishVault.isUnlocked();
+  const cloudHistory = SquishVault.isCloudMode();
   listEl.innerHTML = '';
   
   history.forEach(item => {
@@ -4656,7 +4731,9 @@ function renderDispatchHistoryTable(){
       
     let pwHtml = '';
     if(item.has_password){
-      if(isUnlocked){
+      if(cloudHistory){
+        pwHtml = '<div class="sec-hist-pw-box"><span>Key not stored in Cloud Vault</span></div>';
+      } else if(isUnlocked){
         pwHtml = `
           <div class="sec-hist-pw-box">
             <span>••••••••</span>
@@ -4672,7 +4749,7 @@ function renderDispatchHistoryTable(){
         `;
       }
     }
-    const oobHtml = item.phone && ['oob','dual'].includes(item.key_delivery_mode) ? `
+    const oobHtml = !cloudHistory && item.phone && ['oob','dual'].includes(item.key_delivery_mode) ? `
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px">
         <button type="button" class="btn-sm" data-record-id="${escapeHtml(item.id)}" onclick="shareDispatchKey(this.dataset.recordId,'share')">Share</button>
         <button type="button" class="btn-sm" data-record-id="${escapeHtml(item.id)}" onclick="shareDispatchKey(this.dataset.recordId,'whatsapp')">WhatsApp</button>
@@ -4806,9 +4883,9 @@ async function boot(){
     document.getElementById('footerMode').textContent = 'in-browser (WASM)';
     const note = document.getElementById('modeNote');
     note.hidden = false;
-    note.textContent = 'PDF work runs in your browser. Native-only tools (OCR, Office conversion, PDF/A and signing) stay unavailable; Cloudflare enables secure email when its Worker is deployed.';
+    note.textContent = 'PDF work runs in a background browser worker with private disk staging. Office conversion, PDF/A and signing remain native-only; Cloudflare enables secure email and single-use links when deployed.';
     const script = document.createElement('script');
-    script.src = 'client_tools.js?v=1.7.0-squish';
+    script.src = 'client_tools.js?v=2.0.1-squish';
     script.onerror = () => updateMobileToolTrigger('error');
     document.head.append(script);
   }
@@ -4837,6 +4914,7 @@ window.onStaticToolsReady = function(staticTools) {
     .then(r => r.ok ? r.json() : null)
     .then(caps => {
       if(!caps?.secure_email) return;
+      window.BURNER_LINKS_AVAILABLE = !!caps.burner_links;
       const emailTool = TOOLS.find(t => t.key === 'email-secure');
       if(!emailTool) return;
       emailTool.available = true;

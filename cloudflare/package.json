@@ -1,0 +1,12 @@
+{
+  "name": "squish-edge",
+  "private": true,
+  "scripts": {
+    "check": "WRANGLER_LOG=none wrangler deploy --dry-run --outdir /tmp/squish-worker-build",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.127.1"
+  }
+}

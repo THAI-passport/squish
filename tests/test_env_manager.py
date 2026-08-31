@@ -1,5 +1,7 @@
 """Tests for backend/env_manager.py (server-side .env SMTP profile storage)."""
 
+import pytest
+
 import env_manager
 
 
@@ -62,3 +64,39 @@ def test_wipe_all_clears_only_smtp_keys(tmp_path, monkeypatch):
     env_manager.wipe_all()
     assert env_manager.list_profiles_masked() == []
     assert "SOME_OTHER_VAR=keep-me" in env_path.read_text(encoding="utf-8")
+
+
+def test_managed_values_are_quoted_and_round_trip(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    monkeypatch.setattr(env_manager, "ENV_PATH", env_path)
+    env_manager.add_profile({
+        "name": 'Ops "Primary"', "server": "smtp.example.com", "port": 587,
+        "username": "user@example.com", "password": "p$ss`word\\value",
+        "from_name": "Ops Team",
+    })
+    text = env_path.read_text(encoding="utf-8")
+    assert 'SMTP_1_PASSWORD="' in text
+    assert env_manager.get_profile_for_dispatch(1)["password"] == "p$ss`word\\value"
+
+
+@pytest.mark.parametrize("field", ["name", "server", "username", "password", "from_name"])
+def test_control_characters_are_rejected(field, tmp_path, monkeypatch):
+    monkeypatch.setattr(env_manager, "ENV_PATH", tmp_path / ".env")
+    payload = {
+        "name": "Primary", "server": "smtp.example.com", "port": 587,
+        "username": "user@example.com", "password": "secret", "from_name": "Ops",
+    }
+    payload[field] += "\nAPI_KEY=attacker"
+    with pytest.raises(ValueError, match="cannot contain"):
+        env_manager.add_profile(payload)
+
+
+def test_out_of_range_profile_keys_are_ignored(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text("SMTP_0_SERVER=ignored\nSMTP_6_SERVER=ignored\n", encoding="utf-8")
+    monkeypatch.setattr(env_manager, "ENV_PATH", env_path)
+    assert env_manager.list_profiles_masked() == []
+    assert env_manager.add_profile({
+        "server": "smtp.example.com", "port": 587,
+        "username": "user@example.com", "password": "secret",
+    }) == 1

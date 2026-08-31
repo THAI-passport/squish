@@ -12,8 +12,9 @@ docker compose up --build         # http://localhost:8000
 kubectl apply -f k8s/squish.yaml
 ```
 
-> **Status: works.** The full test suite passes end-to-end — see
-> [Tests](#tests) for what is and isn't covered (the Pyodide static mode is not).
+> **Status: works.** The native suite passes end-to-end, while the static
+> Pyodide, OPFS and OCR path has automated component coverage plus a browser
+> smoke test. See [Tests](#tests) for the exact boundary.
 
 ---
 
@@ -90,31 +91,64 @@ Engines are delegated to, not reimplemented:
 whose engine is absent are greyed out in the UI rather than failing at submit
 time, so a slim build degrades honestly.
 
-## Cloudflare Pages
+## Cloudflare Workers static deployment
 
-Cloudflare Pages cannot run the native FastAPI/Ghostscript/LibreOffice image.
-Squish therefore uses a browser-only WebAssembly build there: the PDF stays in
-the tab and PyMuPDF runs locally. Deploy `backend/static` as the Pages output
-directory. Its `_worker.js` adds Secure Email Dispatch through Cloudflare's TCP
-socket API while continuing to serve the static assets through `env.ASSETS`.
+Cloudflare cannot run the native FastAPI/Ghostscript/LibreOffice image at the
+edge. Squish therefore ships a browser-only WebAssembly build: PDFs stay in the
+tab, PyMuPDF runs in a dedicated worker, and large inputs are staged in the
+Origin Private File System (OPFS) where supported. The static build currently
+supports 34 of 39 tools. Compress, repair, grayscale and Markdown-to-PDF use
+explicit browser-specific fallbacks.
 
-The Pages build supports 33 of 39 tools. Compress, repair, grayscale and
-Markdown-to-PDF use honest browser-specific fallbacks. Secure Email Dispatch
-encrypts each PDF in the browser before sending it to the Worker, requires the
-user's SMTP account on port 465 or 587, and supports isolated page bursting,
-up to 10 independently encrypted attachments, sanitized email templates, and
-on-demand OOB password sharing.
+OCR is local too. Tesseract.js 6.0.1, its 6.1.2 WASM core, and English, French,
+German, Spanish, Portuguese and Italian models are vendored under
+`backend/static/vendor/tesseract`. Models are cached by Tesseract in IndexedDB;
+recognition runs page-by-page and Squish verifies that the visible pixels did
+not change before offering the searchable PDF.
+
+Secure Email Dispatch encrypts every PDF in the browser before sending it to
+the Worker, requires the user's SMTP account on port 465 or 587, and supports
+isolated page bursting, up to 10 independently encrypted attachments,
+sanitized templates, and out-of-band password sharing. Single-use burner links
+store only an AES-GCM-wrapped key envelope in a per-link Durable Object. The
+unwrap secret remains in the URL fragment and is shared separately by the
+sender, so it never reaches Squish's Worker.
 Encrypted `.squishvault` export/import carries Browser Vault profiles, custom
 templates, and dispatch history between devices. Certificate signing remains
 native-server-only because the pyHanko crypto stack is not browser/WASM safe.
 OCR, Office-to-PDF, PDF-to-Word, PDF/A, signing and signature verification
 still require the container build.
 
+Hosted Cloud Vault envelopes carry a key version. Keep the old key secret
+available while rotating so existing rows can be decrypted and re-wrapped on
+their next successful read:
+
 ```bash
-cd backend
-python3 generate_client_tools.py
-npx wrangler pages deploy static --project-name squish --branch main
+npx wrangler d1 migrations apply <database-name> --remote --config cloudflare/wrangler.jsonc
+npx wrangler secret put CLOUD_VAULT_KEY_V1
+# For a rotation, add CLOUD_VAULT_KEY_V2, then set CLOUD_VAULT_KEY_CURRENT=2.
 ```
+
+`CLOUD_VAULT_KEY_V1` may initially match the existing `SESSION_SECRET` for a
+no-downtime migration. Remove an old version only after every envelope has
+been re-wrapped or deliberately invalidated. Cloud Vault is encrypted at rest,
+but it is not zero-knowledge: the hosted deployment holds the wrapping key.
+
+Add the optional `AUTH_DB` D1 binding to `cloudflare/wrangler.jsonc` if hosted
+accounts and Cloud Vault are required. Burner-link code is included but remains
+dormant until a `BURNER_LINKS` Durable Object binding and SQLite class migration
+are configured; the UI hides the option while that binding is absent.
+
+```bash
+python3 backend/generate_client_tools.py
+cd cloudflare
+npm install
+npm run check
+npm run deploy
+```
+
+`npm run deploy` publishes the Worker and static assets; it is intentionally
+not run by the test suite.
 
 ## API
 
@@ -264,7 +298,10 @@ conversion, OCR and PDF/A.
 | `SUBPROC_CPU_SEC` | 600 | `RLIMIT_CPU` on engine children; 0 disables |
 | `SCRATCH_DIR` | `/tmp` | an emptyDir on Kubernetes |
 | `LO_PROFILE_TEMPLATE` | `/opt/lo-profile` | warm LibreOffice profile baked at build |
-| `API_KEY` | unset | when set, `/api/*` needs `X-API-Key` (health is exempt) |
+| `API_KEY` | unset | protects `/api/*` and `/metrics` through `X-API-Key`; secure email and server-side SMTP stay disabled until it is set |
+| `SQUISH_ALLOW_PLAINTEXT_SMTP` | 0 | set to `1` only for an explicitly trusted network to permit SMTP without TLS |
+| `INCLUDE_PASSWORD_IN_RECEIPT` | 0 | set to `1` only if a downloaded dispatch receipt must contain the PDF password |
+| `LEAK_TRACER_SECRET` | random per dispatch | stable HMAC key for leak-marker correlation; use a secret of at least 32 random bytes in persistent deployments |
 
 `MAX_TOTAL_UPLOAD_MB` cannot be raised alone. The body is spooled by Starlette
 and then copied into the scratch dir, so peak scratch use is roughly twice this
@@ -305,9 +342,9 @@ semaphore saturation.
 `squish_inflight` sitting at `squish_concurrency_limit` means requests are
 queueing, which the HPA's CPU target will not show you.
 
-This endpoint is **not** behind `API_KEY` — it sits outside `/api` so scrapers
-work without credentials. Restrict it at the ingress if the deployment is
-public.
+When `API_KEY` is configured, this endpoint requires the same `X-API-Key`
+header as the private API. If `API_KEY` is unset it remains open for local
+Prometheus scraping; restrict it at the ingress on a public deployment.
 
 ## Tests
 
@@ -316,7 +353,7 @@ pip install -r backend/requirements-dev.txt
 pytest
 ```
 
-103 test functions across three files, several parametrised. Fixture PDFs are
+The suite includes Python and browser-vault tests, several parametrised. Fixture PDFs are
 **generated, not committed** — binary fixtures rot, nobody can review a diff on
 them, and a corrupt one produces a failure that looks like a code bug.
 

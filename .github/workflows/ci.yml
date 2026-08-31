@@ -28,6 +28,10 @@ jobs:
 
       - run: pip install -r backend/requirements-dev.txt
       - run: pytest -v
+      - name: Test browser and hosted vaults
+        run: |
+          node tests/test_vault.js
+          node tests/test_auth.mjs
 
       # Fail the build if any test was skipped for a MISSING ENGINE, which
       # would mean the step above regressed.

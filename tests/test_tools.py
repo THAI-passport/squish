@@ -578,8 +578,8 @@ def test_auto_redact_custom_dictionary(work):
 
 def test_steganography_encoding_and_extraction():
     recipient = "agent007@secret.gov"
-    zero_str, tag_hash = T._encode_zero_width_tag(recipient)
-    assert len(tag_hash) == 8
+    zero_str, tag_hash = T._encode_zero_width_tag(recipient, "test-deployment-secret")
+    assert len(tag_hash) == 32
     assert "\uFEFF" in zero_str
     decoded = T._decode_zero_width_tag(zero_str)
     assert decoded == tag_hash
@@ -587,7 +587,7 @@ def test_steganography_encoding_and_extraction():
 
 def test_recipient_watermark_in_dispatch(work, pdf):
     recipient = "leakcheck@example.com"
-    zero_str, tag_hash = T._encode_zero_width_tag(recipient)
+    zero_str, tag_hash = T._encode_zero_width_tag(recipient, "test-deployment-secret")
     watermark_text = f"Confidential • Dispatched to {recipient} [ID: {tag_hash}]"
     dest = T._dispatch_protect_pdf(
         work, pdf, "TestPassword123!", "OwnerPass!",

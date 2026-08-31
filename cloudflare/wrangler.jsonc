@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "squish-edge",
+  "main": "../backend/static/squish-email-worker.js",
+  "compatibility_date": "2026-08-30",
+  "assets": {
+    "directory": "../backend/static",
+    "binding": "ASSETS",
+    "html_handling": "drop-trailing-slash",
+    "not_found_handling": "none",
+    "run_worker_first": ["/api/*", "/auth/*", "/unlock", "/unlock.html"]
+  },
+  // Burner links are intentionally dormant on deployments without Durable
+  // Objects. Add the BURNER_LINKS binding and its SQLite class migration when
+  // that service is available; the Worker capability probe hides the feature
+  // while the binding is absent.
+  "placement": {"mode": "smart"},
+  "observability": {
+    "enabled": true,
+    "logs": {"enabled": true, "head_sampling_rate": 1},
+    "traces": {"enabled": true, "head_sampling_rate": 0.01}
+  }
+}

@@ -16,6 +16,7 @@ Run:
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import os
 import re
@@ -47,7 +48,7 @@ log = logging.getLogger("uvicorn.error")
 
 APP_TITLE = "Squish"
 # run-local.sh greps for the "-squish" marker to prove new code is running.
-APP_VERSION = "1.7.0-squish"
+APP_VERSION = "2.0.1-squish"
 
 # ---------------------------------------------------------------- config ---
 MAX_UPLOAD_MB = int(os.environ.get("MAX_UPLOAD_MB", "200"))
@@ -80,14 +81,58 @@ app = FastAPI(title=APP_TITLE, docs_url=None, redoc_url=None)
 # hungry. Without a ceiling, a handful of concurrent OCR jobs will OOM the pod.
 sem = asyncio.Semaphore(MAX_CONCURRENCY)
 
+_STATE_CHANGING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+_PUBLIC_API_PATHS = {"/api/health", "/api/runtime"}
+
+
+def _same_origin_request(request: Request) -> bool:
+    """Reject browser cross-site writes while preserving non-browser clients.
+
+    Modern browsers attach both Origin and Sec-Fetch-Site to cross-origin form
+    posts and fetches. CLI clients normally attach neither, so API-key callers
+    remain usable without having to forge browser headers.
+    """
+    origin = request.headers.get("origin")
+    fetch_site = (request.headers.get("sec-fetch-site") or "").lower()
+    if fetch_site and fetch_site not in {"same-origin", "none"}:
+        return False
+    if not origin:
+        return True
+    expected = f"{request.url.scheme}://{request.headers.get('host') or request.url.netloc}"
+    return origin.rstrip("/") == expected.rstrip("/")
+
+
+def _sensitive_smtp_path(path: str) -> bool:
+    return (
+        path.startswith("/api/smtp/")
+        or path in {"/api/t/email-secure", "/api/send-secure-email"}
+    )
+
+
+def _valid_api_key(request: Request) -> bool:
+    """Check only the header form so credentials never land in URLs/logs."""
+    given = request.headers.get("x-api-key") or ""
+    return bool(API_KEY) and hmac.compare_digest(given, API_KEY)
+
 
 @app.middleware("http")
 async def guard(request: Request, call_next):
     path = request.url.path
-    if API_KEY and path.startswith("/api") and path not in {"/api/health", "/api/runtime"}:
-        given = request.headers.get("x-api-key") or request.query_params.get("key")
-        if given != API_KEY:
+    if path.startswith("/api") and request.method.upper() in _STATE_CHANGING_METHODS:
+        if not _same_origin_request(request):
+            return JSONResponse({"detail": "cross-origin API requests are not allowed"}, 403)
+
+    guarded = (path.startswith("/api") and path not in _PUBLIC_API_PATHS) or path == "/metrics"
+    if API_KEY and guarded:
+        if not _valid_api_key(request):
             return JSONResponse({"detail": "invalid or missing API key"}, 401)
+    if _sensitive_smtp_path(path) and not API_KEY:
+        return JSONResponse({
+            "detail": (
+                "Secure email and SMTP endpoints require API_KEY to be configured "
+                "on this server."
+            )
+        }, 403)
     # Reject an oversized body BEFORE Starlette parses the multipart. Once
     # request.form() runs, the whole body has already been received and spooled
     # -- and the spool lands in /tmp, which is a tmpfs in both deployments, so
@@ -236,6 +281,7 @@ async def tool_list():
 @app.post("/api/smtp/test")
 async def smtp_test(request: Request):
     """Test SMTP connection parameters without sending an email."""
+    _require_api_key(request)
     try:
         data = await request.json()
     except Exception:
@@ -273,6 +319,7 @@ async def smtp_resend_key(request: Request):
     the same password rather than generating (and emailing) a new one that
     would no longer match the PDF already sitting in the recipient's inbox.
     """
+    _require_api_key(request)
     try:
         data = await request.json()
     except Exception:
@@ -307,8 +354,12 @@ async def smtp_resend_key(request: Request):
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc))
-    except Exception as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=502)
+    except Exception:
+        log.exception("SMTP key resend failed")
+        return JSONResponse(
+            {"ok": False, "error": "SMTP delivery failed; check the server logs"},
+            status_code=502,
+        )
     return JSONResponse(res)
 
 
@@ -320,12 +371,11 @@ def _require_api_key(request: Request) -> None:
     if not API_KEY:
         raise HTTPException(
             403,
-            "Server-side SMTP profile storage requires API_KEY to be set. "
+            "Secure email and server-side SMTP operations require API_KEY to be set. "
             "Set the API_KEY environment variable and restart, or use the "
             "browser-side Vault instead."
         )
-    given = request.headers.get("x-api-key") or request.query_params.get("key")
-    if given != API_KEY:
+    if not _valid_api_key(request):
         raise HTTPException(401, "invalid or missing API key")
 
 
@@ -367,6 +417,8 @@ async def smtp_profiles_update(idx: int, request: Request):
         env_manager.update_profile_meta(idx, name=data.get("name"), from_name=data.get("from_name"))
     except KeyError as exc:
         raise HTTPException(404, str(exc))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
     return JSONResponse({"ok": True})
 
 
@@ -443,6 +495,8 @@ async def run_tool(key: str, request: Request):
     tool = T.REGISTRY.get(key)
     if tool is None:
         raise HTTPException(404, f"unknown tool: {key}")
+    if key == "email-secure":
+        _require_api_key(request)
 
     form = await parse_form(request)
     uploads = [v for v in form.getlist("files") if isinstance(v, UploadFile)]

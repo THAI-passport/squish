@@ -20,8 +20,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 MAX_PROFILES = 5
-_KEY_RE = re.compile(r'^SMTP_(\d)_([A-Z_]+)$')
+_KEY_RE = re.compile(r'^SMTP_([1-5])_([A-Z_]+)$')
 _FIELDS = ("NAME", "SERVER", "PORT", "USERNAME", "PASSWORD", "FROM_NAME", "SECURITY")
+_CONTROL_RE = re.compile(r"[\r\n\x00]")
 
 ENV_PATH = Path(os.environ.get("SMTP_ENV_PATH") or (Path(__file__).parent / ".env"))
 
@@ -41,6 +42,30 @@ def _write_env_lines(lines: List[str]) -> None:
         pass
 
 
+def _clean_value(value: Any, label: str, *, strip: bool = True) -> str:
+    result = str(value)
+    if _CONTROL_RE.search(result):
+        raise ValueError(f"'{label}' cannot contain CR, LF, or NUL characters")
+    return result.strip() if strip else result
+
+
+def _quote_env(value: str) -> str:
+    """Quote managed values for dotenv and shell-style readers."""
+    escaped = (value.replace("\\", "\\\\").replace('"', '\\"')
+               .replace("$", "\\$").replace("`", "\\`"))
+    return f'"{escaped}"'
+
+
+def _unquote_env(value: str) -> str:
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        body = value[1:-1]
+        return re.sub(r'\\([\\"$`])', r'\1', body)
+    if len(value) >= 2 and value[0] == value[-1] == "'":
+        return value[1:-1]
+    return value
+
+
 def _parse_profiles() -> Dict[int, Dict[str, str]]:
     """Read SMTP_<n>_* keys (and any other lines, preserved verbatim)."""
     profiles: Dict[int, Dict[str, str]] = {}
@@ -53,7 +78,7 @@ def _parse_profiles() -> Dict[int, Dict[str, str]]:
         if not m:
             continue
         idx, field = int(m.group(1)), m.group(2)
-        profiles.setdefault(idx, {})[field] = value
+        profiles.setdefault(idx, {})[field] = _unquote_env(value)
     return profiles
 
 
@@ -69,7 +94,7 @@ def _serialize(profiles: Dict[int, Dict[str, str]]) -> List[str]:
         prof = profiles[idx]
         for field in _FIELDS:
             if field in prof:
-                smtp_lines.append(f"SMTP_{idx}_{field}={prof[field]}")
+                smtp_lines.append(f"SMTP_{idx}_{field}={_quote_env(prof[field])}")
     return other_lines + (["", "# --- Squish SMTP profiles (managed by env_manager.py) ---"] if smtp_lines else []) + smtp_lines
 
 
@@ -119,15 +144,26 @@ def add_profile(data: Dict[str, Any]) -> int:
             raise ValueError(f"'{field}' is required")
 
     used = set(profiles.keys())
-    idx = next(i for i in range(1, MAX_PROFILES + 1) if i not in used)
+    idx = next((i for i in range(1, MAX_PROFILES + 1) if i not in used), None)
+    if idx is None:
+        raise ValueError(f"Maximum of {MAX_PROFILES} SMTP profiles reached")
+    port = int(data["port"])
+    if not 1 <= port <= 65535:
+        raise ValueError("'port' must be between 1 and 65535")
+    security = _clean_value(
+        data.get("security") or ("ssl" if port == 465 else "starttls"),
+        "security",
+    ).lower()
+    if security not in {"ssl", "starttls", "none"}:
+        raise ValueError("'security' must be ssl, starttls, or none")
     profiles[idx] = {
-        "NAME": str(data.get("name") or data["username"]).strip(),
-        "SERVER": str(data["server"]).strip(),
-        "PORT": str(int(data["port"])),
-        "USERNAME": str(data["username"]).strip(),
-        "PASSWORD": str(data["password"]),
-        "FROM_NAME": str(data.get("from_name") or "").strip(),
-        "SECURITY": str(data.get("security") or ("ssl" if int(data["port"]) == 465 else "starttls")),
+        "NAME": _clean_value(data.get("name") or data["username"], "name"),
+        "SERVER": _clean_value(data["server"], "server"),
+        "PORT": str(port),
+        "USERNAME": _clean_value(data["username"], "username"),
+        "PASSWORD": _clean_value(data["password"], "password", strip=False),
+        "FROM_NAME": _clean_value(data.get("from_name") or "", "from_name"),
+        "SECURITY": security,
     }
     _write_env_lines(_serialize(profiles))
     return idx
@@ -139,9 +175,9 @@ def update_profile_meta(idx: int, name: Optional[str] = None, from_name: Optiona
     if idx not in profiles:
         raise KeyError(f"No SMTP profile #{idx}")
     if name is not None:
-        profiles[idx]["NAME"] = name.strip()
+        profiles[idx]["NAME"] = _clean_value(name, "name")
     if from_name is not None:
-        profiles[idx]["FROM_NAME"] = from_name.strip()
+        profiles[idx]["FROM_NAME"] = _clean_value(from_name, "from_name")
     _write_env_lines(_serialize(profiles))
 
 

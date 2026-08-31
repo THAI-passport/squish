@@ -1,7 +1,0 @@
-name = "squish-secure-smtp"
-main = "../backend/static/squish-email-worker.js"
-compatibility_date = "2024-04-01"
-compatibility_flags = ["nodejs_compat"]
-
-[placement]
-mode = "smart"
