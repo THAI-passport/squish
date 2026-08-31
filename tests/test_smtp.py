@@ -528,7 +528,8 @@ def test_send_dual_secure_email_partial_failure_on_email2(mock_smtp, tmp_path):
     assert res["partial"] is True
     assert res["step1_sent"] is True
     assert res["step2_sent"] is False
-    assert "connection reset" in res["error"]
+    assert res["error"] == "The SMTP connection failed."
+    assert res["diagnostic"]["stage"] == "password_delivery"
 
 
 @patch("smtplib.SMTP")
@@ -544,7 +545,7 @@ def test_send_dual_secure_email_total_failure_when_email1_fails(mock_smtp, tmp_p
     doc.save(pdf_path)
     doc.close()
 
-    with pytest.raises(Exception, match="auth failed"):
+    with pytest.raises(smtp_manager.DeliveryUncertainError, match="did not confirm delivery"):
         smtp_manager.send_dual_secure_email(
             smtp={"server": "smtp.example.com", "port": 587, "username": "sender@example.com", "password": "pw"},
             recipient="client@example.com",
@@ -658,7 +659,7 @@ def test_send_dual_secure_email_multi_relay_failover(mock_smtp, tmp_path):
     fallback = MagicMock()
     mock_smtp.side_effect = [primary, fallback]
     primary.ehlo.return_value = (250, b"ok")
-    primary.sendmail.side_effect = Exception("primary 550 relay denied")
+    primary.sendmail.side_effect = smtplib.SMTPDataError(550, b"relay denied")
     fallback.ehlo.return_value = (250, b"ok")
 
     pdf_path = tmp_path / "doc.pdf"
@@ -681,6 +682,9 @@ def test_send_dual_secure_email_multi_relay_failover(mock_smtp, tmp_path):
     assert res["ok"] is True
     assert "backup.relay.com" in res["relay_used"]
     assert fallback.sendmail.call_count == 2
+    primary_message = message_from_string(primary.sendmail.call_args.args[2])
+    fallback_message = message_from_string(fallback.sendmail.call_args_list[0].args[2])
+    assert primary_message["Message-ID"] == fallback_message["Message-ID"]
 
 
 @patch("smtplib.SMTP")
@@ -723,10 +727,64 @@ def test_email_secure_tool_includes_stego_tag_and_relay(mock_smtp, tmp_path):
 
 
 def test_dispatch_delay_is_clamped():
-    assert smtp_manager.clamp_dispatch_delay(-100) == 0.5
+    assert smtp_manager.clamp_dispatch_delay(-100) == 0.0
     assert smtp_manager.clamp_dispatch_delay(100000) == 10.0
     with pytest.raises(ValueError, match="finite"):
         smtp_manager.clamp_dispatch_delay(float("inf"))
+
+
+def test_tls_context_requires_tls_1_2_or_newer():
+    assert smtp_manager._tls_context().minimum_version == ssl.TLSVersion.TLSv1_2
+
+
+@patch("smtplib.SMTP")
+def test_smtp_relay_allowlist_rejects_unapproved_host_before_connect(mock_smtp, monkeypatch):
+    monkeypatch.setenv("SMTP_ALLOWED_HOSTS", "approved.example.com")
+    with pytest.raises(ValueError, match="not permitted by SMTP_ALLOWED_HOSTS"):
+        smtp_manager._connect({
+            "server": "unapproved.example.com", "port": 587,
+            "security": "starttls", "username": "sender@example.com", "password": "pw",
+        }, timeout=1)
+    mock_smtp.assert_not_called()
+
+
+@patch("smtplib.SMTP")
+def test_smtp_relay_allowlist_rejects_unapproved_port_before_connect(mock_smtp, monkeypatch):
+    monkeypatch.setenv("SMTP_ALLOWED_PORTS", "465")
+    with pytest.raises(ValueError, match="not permitted by SMTP_ALLOWED_PORTS"):
+        smtp_manager._connect({
+            "server": "smtp.example.com", "port": 587,
+            "security": "starttls", "username": "sender@example.com", "password": "pw",
+        }, timeout=1)
+    mock_smtp.assert_not_called()
+
+
+@patch("smtplib.SMTP")
+def test_failed_smtp_handshake_closes_socket(mock_smtp):
+    server = mock_smtp.return_value
+    server.ehlo.return_value = (500, b"EHLO rejected")
+    with pytest.raises(smtplib.SMTPHeloError):
+        smtp_manager._connect({
+            "server": "smtp.example.com", "port": 587,
+            "security": "starttls", "username": "sender@example.com", "password": "pw",
+        }, timeout=1)
+    server.close.assert_called_once_with()
+
+
+def test_smtp_relay_pool_is_bounded(tmp_path):
+    pdf_path = tmp_path / "doc.pdf"
+    _make_test_pdf(pdf_path)
+    relays = [
+        {"server": f"smtp-{idx}.example.com", "port": 587, "username": "sender@example.com", "password": "pw"}
+        for idx in range(smtp_manager.MAX_SMTP_RELAYS + 1)
+    ]
+    with pytest.raises(ValueError, match="maximum of 3 SMTP relays"):
+        smtp_manager.send_dual_secure_email(
+            smtp=relays,
+            recipient="client@example.com",
+            pdf_path=pdf_path,
+            password="MySecretKey123!",
+        )
 
 
 def test_email_html_sanitizer_removes_active_and_tracking_content():

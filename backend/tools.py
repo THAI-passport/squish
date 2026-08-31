@@ -1459,7 +1459,8 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
     email2_subj = str(p.get("email2_subject") or "").strip() or None
     email2_body_tmpl = str(p.get("email2_body") or "").strip() or None
     try:
-        delay_sec = smtp_manager.clamp_dispatch_delay(p.get("delay_seconds") or 2.5)
+        raw_delay = p.get("delay_seconds")
+        delay_sec = smtp_manager.clamp_dispatch_delay(0.1 if raw_delay in (None, "") else raw_delay)
     except ValueError as exc:
         raise ToolError(str(exc))
     thread_emails = p.get("thread_emails") in (True, "true", "1", 1)
@@ -1474,6 +1475,8 @@ def email_secure(work: Path, inputs: list[Path], p: dict) -> Result:
             key_delivery_mode=key_delivery_mode,
             plain_text_only=p.get("email_plain_text_only") in (True, "true", "1", 1),
         )
+    except smtp_manager.DeliveryUncertainError as exc:
+        raise ToolError(f"Email delivery outcome is uncertain: {exc}")
     except Exception as exc:
         raise ToolError(f"Email delivery failed -- nothing was sent: {exc}")
 

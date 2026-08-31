@@ -27,7 +27,13 @@ from typing import Any, Callable, Dict, Iterable, Optional
 MAX_ATTACHMENTS = 10
 MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024
 MAX_DISPATCH_DELAY_SECONDS = 10.0
+MAX_SMTP_RELAYS = 3
+SMTP_DISPATCH_TIMEOUT_SECONDS = 90.0
 log = logging.getLogger("uvicorn.error")
+
+
+class DeliveryUncertainError(RuntimeError):
+    """The message body was submitted but the relay never confirmed receipt."""
 
 # ------------------------------------------------------------ sanitizers ---
 # Email headers are newline-delimited (RFC 5322). Any \r or \n coming from a
@@ -125,7 +131,30 @@ def clamp_dispatch_delay(value: Any) -> float:
         raise ValueError("Dispatch delay must be a number")
     if not delay == delay or delay in {float("inf"), float("-inf")}:
         raise ValueError("Dispatch delay must be finite")
-    return min(MAX_DISPATCH_DELAY_SECONDS, max(0.5, delay))
+    return min(MAX_DISPATCH_DELAY_SECONDS, max(0.0, delay))
+
+
+def _tls_context() -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
+def _validate_relay_policy(host: Any, port: int) -> None:
+    allowed_hosts = {
+        item.strip().lower()
+        for item in os.environ.get("SMTP_ALLOWED_HOSTS", "").split(",")
+        if item.strip()
+    }
+    if allowed_hosts and str(host or "").strip().lower() not in allowed_hosts:
+        raise ValueError("SMTP host is not permitted by SMTP_ALLOWED_HOSTS")
+    allowed_ports = {
+        int(item.strip())
+        for item in os.environ.get("SMTP_ALLOWED_PORTS", "").split(",")
+        if item.strip().isdigit()
+    }
+    if allowed_ports and port not in allowed_ports:
+        raise ValueError("SMTP port is not permitted by SMTP_ALLOWED_PORTS")
 
 
 def sanitize_header_value(val: Any) -> str:
@@ -198,29 +227,44 @@ def _connect(
             "Plaintext SMTP is disabled; use SSL/STARTTLS or explicitly set "
             "SQUISH_ALLOW_PLAINTEXT_SMTP=1"
         )
+    _validate_relay_policy(host, port)
 
     stage("connection")
     if port == 465 or security == "ssl":
-        context = ssl.create_default_context()
+        context = _tls_context()
         server = smtplib.SMTP_SSL(host, port, context=context, timeout=timeout)
     else:
         server = smtplib.SMTP(host, port, timeout=timeout)
+    try:
+        stage("ehlo")
+        ehlo_result = server.ehlo()
+        if isinstance(ehlo_result, tuple) and len(ehlo_result) >= 2:
+            code, reply = ehlo_result[:2]
+            if isinstance(code, int) and code != 250:
+                raise smtplib.SMTPHeloError(code, reply)
+        if port != 465 and security != "ssl" and (security == "starttls" or port == 587):
+            stage("starttls")
+            context = _tls_context()
+            server.starttls(context=context)
+            stage("ehlo_after_tls")
+            ehlo_result = server.ehlo()
+            if isinstance(ehlo_result, tuple) and len(ehlo_result) >= 2:
+                code, reply = ehlo_result[:2]
+                if isinstance(code, int) and code != 250:
+                    raise smtplib.SMTPHeloError(code, reply)
 
-    stage("ehlo")
-    server.ehlo()
-    if port != 465 and security != "ssl" and (security == "starttls" or port == 587):
-        stage("starttls")
-        context = ssl.create_default_context()
-        server.starttls(context=context)
-        stage("ehlo_after_tls")
-        server.ehlo()
+        if username and password_auth:
+            stage("authentication")
+            server.login(username, password_auth)
 
-    if username and password_auth:
-        stage("authentication")
-        server.login(username, password_auth)
-
-    stage("authenticated")
-    return server
+        stage("authenticated")
+        return server
+    except Exception:
+        try:
+            server.close()
+        except Exception:
+            pass
+        raise
 
 
 def _safe_smtp_reply(exc: BaseException) -> str:
@@ -497,7 +541,7 @@ def send_dual_secure_email(
     html_body: Optional[str] = None,
     email2_subject: Optional[str] = None,
     email2_body: Optional[str] = None,
-    delay_seconds: float = 2.5,
+    delay_seconds: float = 0.1,
     thread_emails: bool = False,
     key_delivery_mode: str = "email",
     plain_text_only: bool = False,
@@ -519,6 +563,8 @@ def send_dual_secure_email(
     pool: list[Dict[str, Any]] = smtp if isinstance(smtp, list) else [smtp]
     if not pool or not any(p.get("server") or p.get("host") for p in pool):
         raise ValueError("At least one valid SMTP profile is required")
+    if len(pool) > MAX_SMTP_RELAYS:
+        raise ValueError(f"A maximum of {MAX_SMTP_RELAYS} SMTP relays is allowed")
 
     pdf_filenames = [sanitize_filename_header(path.name) for path in pdf_paths]
     pdf_filename = pdf_filenames[0]
@@ -528,6 +574,9 @@ def send_dual_secure_email(
 
     last_exc = None
     total_retries = 0
+    dispatch_deadline = time.monotonic() + SMTP_DISPATCH_TIMEOUT_SECONDS
+    first_sender = str(pool[0].get("username") or pool[0].get("sender") or "")
+    message_id = make_msgid(domain=first_sender.split("@")[-1] if "@" in first_sender else None)
 
     for pool_idx, current_smtp in enumerate(pool):
         from_name = sanitize_header_value(current_smtp.get("from_name") or "")
@@ -539,8 +588,22 @@ def send_dual_secure_email(
         for attempt in range(max_retries_per_relay + 1):
             server = None
             step1_sent = False
+            step1_submission_started = False
+            current_stage = "connection"
+
+            def record_stage(stage: str) -> None:
+                nonlocal current_stage
+                current_stage = stage
+
             try:
-                server = _connect(current_smtp, timeout=20)
+                remaining = dispatch_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("SMTP dispatch exceeded the overall time limit")
+                server = _connect(
+                    current_smtp,
+                    timeout=max(1.0, min(20.0, remaining)),
+                    on_stage=record_stage,
+                )
 
                 # ------------------------------------------------------------- EMAIL 1 ---
                 msg1 = MIMEMultipart("mixed")
@@ -550,8 +613,7 @@ def send_dual_secure_email(
                     f"[Secure Document] {subject}" if subject else f"[Secure Document] Attached: {attachment_label}"
                 )
                 msg1["Date"] = formatdate(localtime=True)
-                msg1_id = make_msgid(domain=sender.split("@")[-1] if "@" in sender else None)
-                msg1["Message-ID"] = msg1_id
+                msg1["Message-ID"] = message_id
 
                 alt1 = MIMEMultipart("alternative")
                 delivery_note = (
@@ -604,6 +666,8 @@ def send_dual_secure_email(
                     pdf_part.add_header("Content-Disposition", "attachment", filename=filename)
                     msg1.attach(pdf_part)
 
+                step1_submission_started = True
+                current_stage = "message_delivery"
                 server.sendmail(sender, [recipient], msg1.as_string())
                 step1_sent = True
 
@@ -615,8 +679,9 @@ def send_dual_secure_email(
                     msg2 = _build_email2(
                         from_header, recipient, attachment_label, password, subject,
                         email2_subject, email2_body,
-                        in_reply_to=msg1_id if thread_emails else None
+                        in_reply_to=message_id if thread_emails else None
                     )
+                    current_stage = "password_delivery"
                     server.sendmail(sender, [recipient], msg2.as_string())
 
                 relay_label = relay_host if pool_idx == 0 else f"{relay_host} (fallback from {pool[0].get('server', 'primary')})"
@@ -643,6 +708,7 @@ def send_dual_secure_email(
                 last_exc = exc
                 if step1_sent:
                     # PDF was sent; password email failed. Return partial status.
+                    diagnostic = _smtp_diagnostic(exc, current_stage, secrets.token_hex(4))
                     return {
                         "ok": False,
                         "partial": True,
@@ -654,16 +720,28 @@ def send_dual_secure_email(
                         "key_delivery_mode": mode,
                         "relay_used": relay_host,
                         "retries": total_retries,
-                        "error": str(exc),
-                        "message": f"PDF delivered to {recipient}, but the password email failed: {exc}"
+                        "error": diagnostic["error"],
+                        "diagnostic": diagnostic,
+                        "message": f"PDF delivered to {recipient}, but the password email failed"
                     }
+                if step1_submission_started and not isinstance(exc, smtplib.SMTPResponseException):
+                    # Once DATA transmission begins, a disconnect can mean the
+                    # relay accepted the message but its final 250 was lost.
+                    # Retrying here risks duplicate confidential mail.
+                    raise DeliveryUncertainError(
+                        "The relay did not confirm delivery after message submission; "
+                        "check the recipient mailbox before retrying"
+                    ) from exc
                 # Check if transient error eligible for retry on same relay
                 is_transient = isinstance(exc, (smtplib.SMTPServerDisconnected, smtplib.SMTPConnectError, TimeoutError)) or (
                     isinstance(exc, smtplib.SMTPResponseException) and exc.smtp_code in (421, 450, 451)
                 )
                 if is_transient and attempt < max_retries_per_relay:
                     total_retries += 1
-                    time.sleep(random.uniform(1.0, 2.5))
+                    remaining = dispatch_deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("SMTP dispatch exceeded the overall time limit") from exc
+                    time.sleep(min(random.uniform(1.0, 2.5), remaining))
                     continue
                 # Relay failed; break retry loop to try next relay in pool
                 break

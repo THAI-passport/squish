@@ -300,6 +300,8 @@ conversion, OCR and PDF/A.
 | `LO_PROFILE_TEMPLATE` | `/opt/lo-profile` | warm LibreOffice profile baked at build |
 | `API_KEY` | unset | protects `/api/*` and `/metrics` through `X-API-Key`; secure email and server-side SMTP stay disabled until it is set |
 | `SQUISH_ALLOW_PLAINTEXT_SMTP` | 0 | set to `1` only for an explicitly trusted network to permit SMTP without TLS |
+| `SMTP_ALLOWED_HOSTS` | unset | optional comma-separated exact host allowlist for SMTP relays; recommended for fixed production deployments |
+| `SMTP_ALLOWED_PORTS` | unset | optional comma-separated SMTP port allowlist, for example `465,587` |
 | `INCLUDE_PASSWORD_IN_RECEIPT` | 0 | set to `1` only if a downloaded dispatch receipt must contain the PDF password |
 | `LEAK_TRACER_SECRET` | random per dispatch | stable HMAC key for leak-marker correlation; use a secret of at least 32 random bytes in persistent deployments |
 

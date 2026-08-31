@@ -7,9 +7,9 @@
 <meta name="description" content="Merge, split, compress, convert, OCR, protect and redact PDFs. Runs entirely on your own hardware; files are deleted the moment the download finishes.">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="/manifest.json">
-<script src="/vault.js?v=2.0.1-squish"></script>
-<script src="/vendor/qrcode-generator.js?v=2.0.1-squish"></script>
-<script type="module" src="/burner-links.mjs?v=2.0.1-squish"></script>
+<script src="/vault.js?v=2.0.2-squish"></script>
+<script src="/vendor/qrcode-generator.js?v=2.0.2-squish"></script>
+<script type="module" src="/burner-links.mjs?v=2.0.2-squish"></script>
 
 <style>
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
@@ -3200,10 +3200,11 @@ captain777@gmail.com,Steve Rogers,Shield maintenance schedule`;
       <div class="field">
         <label for="f_delay_seconds">Dispatch Delay between Email #1 and Email #2</label>
         <select id="f_delay_seconds" style="width:auto; max-width:240px;">
-          <option value="2.5" selected>2.5 seconds (Standard)</option>
+          <option value="0.1" selected>0.1 seconds (Fast)</option>
+          <option value="0.5">0.5 seconds</option>
+          <option value="2.5">2.5 seconds</option>
           <option value="5">5 seconds</option>
           <option value="10">10 seconds</option>
-          <option value="30">30 seconds</option>
         </select>
       </div>
       <div class="field" style="margin-top:2px; padding:10px 12px; background:var(--color-paper); border:1px solid var(--color-rule); border-radius:6px;">
@@ -3264,7 +3265,7 @@ captain777@gmail.com,Steve Rogers,Shield maintenance schedule`;
       <span class="sec-step-arrow">→</span>
       <div class="sec-step">
         <span class="sec-step-num">2</span>
-        <span><b>Delay:</b> 2.5s</span>
+        <span><b>Default delay:</b> 0.1s</span>
       </div>
       <span class="sec-step-arrow">→</span>
       <div class="sec-step">
@@ -3514,7 +3515,7 @@ async function runBulkEmailDispatch({ files, fdBase, recipients, rawSubject, raw
     fd.set('email2_subject', recipientE2Subject);
     fd.set('email2_body', recipientE2Body);
     fd.set('custom_password', recipientPw);
-    fd.set('delay_seconds', String(delaySeconds || 2.5));
+    fd.set('delay_seconds', String(delaySeconds ?? 0.1));
     fd.set('thread_emails', threadEmails ? '1' : '0');
     fd.set('key_delivery_mode', keyDeliveryMode || 'email');
     if(r.dispatchPages) fd.set('dispatch_pages', r.dispatchPages); else fd.delete('dispatch_pages');
@@ -3687,7 +3688,7 @@ async function submit(){
           rawHtml: document.getElementById('f_email_body_html')?.value || '',
           rawE2Subject: document.getElementById('f_email2_subject')?.value || '',
           rawE2Body: document.getElementById('f_email2_body')?.value || '',
-          delaySeconds: parseFloat(document.getElementById('f_delay_seconds')?.value || 2.5),
+          delaySeconds: parseFloat(document.getElementById('f_delay_seconds')?.value || 0.1),
           pwMode: document.getElementById('f_password_mode')?.value || 'random',
           customPassword: document.getElementById('f_custom_password')?.value || '',
           customFind: document.getElementById('f_bulk_custom_find')?.value || '',
@@ -4885,7 +4886,7 @@ async function boot(){
     note.hidden = false;
     note.textContent = 'PDF work runs in a background browser worker with private disk staging. Office conversion, PDF/A and signing remain native-only; Cloudflare enables secure email and single-use links when deployed.';
     const script = document.createElement('script');
-    script.src = 'client_tools.js?v=2.0.1-squish';
+    script.src = 'client_tools.js?v=2.0.2-squish';
     script.onerror = () => updateMobileToolTrigger('error');
     document.head.append(script);
   }

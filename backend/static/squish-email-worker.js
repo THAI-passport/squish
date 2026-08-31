@@ -17,7 +17,14 @@ import {
 } from './squish-auth.mjs';
 
 const MAX_ENCRYPTED_PDF_BYTES = 12 * 1024 * 1024;
+const MAX_REQUEST_BYTES = 18 * 1024 * 1024;
 const MAX_ATTACHMENTS = 10;
+const SMTP_STAGE_TIMEOUT_MS = 15000;
+const SMTP_CONNECT_TIMEOUT_MS = 8000;
+const SMTP_CLOSE_TIMEOUT_MS = 2000;
+const SMTP_OVERALL_TIMEOUT_MS = 90000;
+const MAX_SMTP_RESPONSE_BYTES = 16 * 1024;
+const MAX_SMTP_RESPONSE_LINES = 100;
 const MIN_BURNER_TTL_MS = 60 * 1000;
 const MAX_BURNER_TTL_MS = 72 * 60 * 60 * 1000;
 const BURNER_ID_RE = /^[A-Za-z0-9_-]{32}$/;
@@ -102,7 +109,7 @@ function validateEmail(value, label = 'Email address') {
   return email;
 }
 
-function validateSmtp(config) {
+function validateSmtp(config, policy = {}) {
   const smtp = config || {};
   const server = cleanHeader(smtp.server || smtp.host);
   const username = validateEmail(smtp.username, 'SMTP username');
@@ -111,9 +118,18 @@ function validateSmtp(config) {
   const security = cleanHeader(smtp.security || (port === 465 ? 'ssl' : 'starttls')).toLowerCase();
   if (!server || !/^[a-z0-9.-]+$/i.test(server)) throw new Error('A valid SMTP host is required');
   if (!password) throw new Error('SMTP password is required');
+  if (password.length > 2048) throw new Error('SMTP password is too long');
   if (port < 1 || port > 65535) throw new Error('SMTP port is invalid');
   if (port === 25) throw new Error('Cloudflare blocks outbound SMTP on port 25; use 465 or 587');
   if (!['ssl', 'starttls'].includes(security)) throw new Error('Use SSL or STARTTLS for SMTP');
+  const allowedHosts = new Set(String(policy.SMTP_ALLOWED_HOSTS || '').split(',').map(v => v.trim().toLowerCase()).filter(Boolean));
+  if (allowedHosts.size && !allowedHosts.has(server.toLowerCase())) {
+    throw new Error('SMTP host is not permitted by SMTP_ALLOWED_HOSTS');
+  }
+  const allowedPorts = new Set(String(policy.SMTP_ALLOWED_PORTS || '').split(',').map(v => Number.parseInt(v.trim(), 10)).filter(Number.isInteger));
+  if (allowedPorts.size && !allowedPorts.has(port)) {
+    throw new Error('SMTP port is not permitted by SMTP_ALLOWED_PORTS');
+  }
   return {
     server, username, password, port, security,
     from_name: cleanHeader(smtp.from_name || smtp.fromName)
@@ -140,10 +156,37 @@ function assertSameOrigin(request) {
 
 async function readJson(request) {
   const length = Number(request.headers.get('Content-Length') || 0);
-  if (length > 18 * 1024 * 1024) throw new Error('Encrypted attachment is too large for the Cloudflare email worker');
+  if (length > MAX_REQUEST_BYTES) throw new Error('Encrypted attachment is too large for the Cloudflare email worker');
   try {
-    return await request.json();
-  } catch {
+    if (!request.body) throw new Error('empty body');
+    const reader = request.body.getReader();
+    const chunks = [];
+    let total = 0;
+    while (true) {
+      const {value, done} = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > MAX_REQUEST_BYTES) {
+        await reader.cancel('request too large');
+        throw new Error('request too large');
+      }
+      chunks.push(value);
+      if (chunks.length > 4096) {
+        await reader.cancel('request too fragmented');
+        throw new Error('request too fragmented');
+      }
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch (error) {
+    if (error?.message === 'request too large' || error?.message === 'request too fragmented') {
+      throw new Error('Encrypted attachment is too large for the Cloudflare email worker');
+    }
     throw new Error('Request body must be valid JSON');
   }
 }
@@ -159,6 +202,23 @@ function utf8Base64(value) {
 
 function wrapBase64(value) {
   return String(value).match(/.{1,76}/g)?.join('\r\n') || '';
+}
+
+function wireBase64Size(value) {
+  const length = String(value || '').length;
+  return length + (2 * Math.ceil(length / 76));
+}
+
+function parseEhloCapabilities(response) {
+  const capabilities = new Map();
+  for (const line of String(response || '').split('\n')) {
+    const value = line.replace(/^250[- ]?/, '').trim();
+    if (!value) continue;
+    const [rawName, ...rest] = value.split(/\s+/);
+    const [name, inlineValue = ''] = rawName.toUpperCase().split('=', 2);
+    capabilities.set(name, [inlineValue, ...rest].filter(Boolean).join(' '));
+  }
+  return capabilities;
 }
 
 function encodedHeader(value) {
@@ -225,6 +285,10 @@ function smtpDiagnostic(error, client) {
     category = 'invalid_configuration';
     message = rawMessage || 'The SMTP configuration is invalid.';
     hint = 'Correct the SMTP host, port, username, password, and security settings.';
+  } else if (stage === 'message_size') {
+    category = 'message_too_large';
+    message = 'The encoded email exceeds the relay message-size limit.';
+    hint = 'Reduce the attachment size or use a relay with a larger advertised SIZE limit.';
   } else if (/dns|resolve|not known|name lookup/i.test(rawMessage)) {
     stage = 'dns'; category = 'host_not_found';
     message = 'The SMTP hostname could not be resolved.';
@@ -240,7 +304,7 @@ function smtpDiagnostic(error, client) {
       category = 'credentials_rejected';
       message = 'The SMTP server rejected the username or password.';
       hint = 'Confirm the authentication username, password, and whether this account permits SMTP AUTH.';
-    } else if (/not implemented|not supported|unrecognized|unknown command/i.test(relayResponse || rawMessage)) {
+    } else if (/not implemented|not supported|not advertised|unrecognized|unknown command/i.test(relayResponse || rawMessage)) {
       category = 'auth_not_supported';
       message = 'The SMTP server does not offer a supported authentication method.';
       hint = 'The relay may use IP allowlisting instead of SMTP AUTH; ask the relay administrator.';
@@ -279,8 +343,8 @@ function smtpDiagnostic(error, client) {
 }
 
 class SmtpClient {
-  constructor(config) {
-    this.config = validateSmtp(config);
+  constructor(config, policy = {}) {
+    this.config = validateSmtp(config, policy);
     this.socket = null;
     this.reader = null;
     this.writer = null;
@@ -288,6 +352,31 @@ class SmtpClient {
     this.encoder = new TextEncoder();
     this.decoder = new TextDecoder();
     this.stage = 'configuration';
+    this.capabilities = new Map();
+    this.expiresAt = Date.now() + SMTP_OVERALL_TIMEOUT_MS;
+  }
+
+  async deadline(promise, timeoutMs = SMTP_STAGE_TIMEOUT_MS) {
+    const remaining = this.expiresAt - Date.now();
+    const effectiveTimeout = Math.max(1, Math.min(timeoutMs, remaining));
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(`SMTP timeout during ${this.stage}`);
+        error.smtpStage = this.stage;
+        try { void this.socket?.close(); } catch {}
+        reject(error);
+      }, effectiveTimeout);
+    });
+    try {
+      return await Promise.race([promise, timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async write(value) {
+    await this.deadline(this.writer.write(this.encoder.encode(value)));
   }
 
   async open() {
@@ -297,15 +386,24 @@ class SmtpClient {
       {hostname: this.config.server, port: this.config.port},
       {secureTransport: implicitTls ? 'on' : 'starttls'}
     );
+    await this.deadline(this.socket.opened, SMTP_CONNECT_TIMEOUT_MS);
     this.reader = this.socket.readable.getReader();
     this.writer = this.socket.writable.getWriter();
     this.stage = 'greeting';
     this.expect(await this.readResponse(), 220, 'SMTP greeting');
     this.stage = 'ehlo';
-    this.expect(await this.command('EHLO squish.app'), 250, 'EHLO');
+    const initialEhlo = await this.command('EHLO squish.app');
+    this.expect(initialEhlo, 250, 'EHLO');
+    this.capabilities = parseEhloCapabilities(initialEhlo);
 
     if (!implicitTls) {
       this.stage = 'starttls';
+      if (!this.capabilities.has('STARTTLS')) {
+        const error = new Error('STARTTLS was not advertised by the SMTP server');
+        error.smtpStage = this.stage;
+        error.relayResponse = initialEhlo;
+        throw error;
+      }
       this.expect(await this.command('STARTTLS'), 220, 'STARTTLS');
       this.reader.releaseLock();
       this.writer.releaseLock();
@@ -313,8 +411,11 @@ class SmtpClient {
       this.reader = this.socket.readable.getReader();
       this.writer = this.socket.writable.getWriter();
       this.buffer = '';
+      await this.deadline(this.socket.opened, SMTP_CONNECT_TIMEOUT_MS);
       this.stage = 'ehlo_after_tls';
-      this.expect(await this.command('EHLO squish.app'), 250, 'EHLO after STARTTLS');
+      const secureEhlo = await this.command('EHLO squish.app');
+      this.expect(secureEhlo, 250, 'EHLO after STARTTLS');
+      this.capabilities = parseEhloCapabilities(secureEhlo);
     }
     this.stage = 'authentication';
     await this.authenticate();
@@ -333,53 +434,119 @@ class SmtpClient {
   }
 
   async authenticate() {
-    this.stage = 'authentication_method';
-    const login = await this.command('AUTH LOGIN');
-    if (login.startsWith('334')) {
-      this.stage = 'authentication_username';
-      this.expect(await this.command(utf8Base64(this.config.username)), 334, 'SMTP username');
+    const advertised = String(this.capabilities.get('AUTH') || '').toUpperCase().split(/\s+/).filter(Boolean);
+    if (!advertised.length) {
+      const error = new Error('SMTP AUTH was not advertised by the server');
+      error.smtpStage = 'authentication';
+      error.relayResponse = 'AUTH not advertised';
+      throw error;
+    }
+    const plain = utf8Base64(`\0${this.config.username}\0${this.config.password}`);
+    if (advertised.includes('PLAIN')) {
       this.stage = 'authentication_credentials';
-      this.expect(await this.command(utf8Base64(this.config.password)), 235, 'SMTP authentication');
+      const response = await this.command(`AUTH PLAIN ${plain}`);
+      if (response.startsWith('334')) {
+        this.expect(await this.command(plain), 235, 'SMTP authentication');
+      } else {
+        this.expect(response, 235, 'SMTP authentication');
+      }
       return;
     }
+    if (!advertised.includes('LOGIN')) {
+      const error = new Error(`No supported SMTP AUTH mechanism: ${advertised.join(' ')}`);
+      error.smtpStage = 'authentication';
+      error.relayResponse = `AUTH ${advertised.join(' ')}`;
+      throw error;
+    }
+    this.stage = 'authentication_method';
+    const login = await this.command('AUTH LOGIN');
+    this.expect(login, 334, 'SMTP AUTH LOGIN');
+    this.stage = 'authentication_username';
+    this.expect(await this.command(utf8Base64(this.config.username)), 334, 'SMTP username');
     this.stage = 'authentication_credentials';
-    const plain = utf8Base64(`\0${this.config.username}\0${this.config.password}`);
-    this.expect(await this.command(`AUTH PLAIN ${plain}`), 235, 'SMTP authentication');
+    this.expect(await this.command(utf8Base64(this.config.password)), 235, 'SMTP authentication');
   }
 
   async command(command) {
-    await this.writer.write(this.encoder.encode(`${command}\r\n`));
+    await this.write(`${command}\r\n`);
     return this.readResponse();
   }
 
   async readResponse() {
-    let final = '';
+    const lines = [];
+    let responseBytes = 0;
     while (true) {
       const end = this.buffer.indexOf('\r\n');
       if (end >= 0) {
         const line = this.buffer.slice(0, end);
         this.buffer = this.buffer.slice(end + 2);
-        final = line;
-        if (line.length < 4 || line[3] !== '-') return line;
+        lines.push(line);
+        responseBytes += line.length + 2;
+        if (lines.length > MAX_SMTP_RESPONSE_LINES || responseBytes > MAX_SMTP_RESPONSE_BYTES) {
+          const error = new Error('SMTP response exceeded the safety limit');
+          error.smtpStage = this.stage;
+          throw error;
+        }
+        if (line.length < 4 || line[3] !== '-') return lines.join('\n');
         continue;
       }
-      const {value, done} = await this.reader.read();
-      if (done) return final || this.buffer;
+      const {value, done} = await this.deadline(this.reader.read());
+      if (done) return lines.length ? lines.join('\n') : this.buffer;
       this.buffer += this.decoder.decode(value, {stream: true});
+      if (this.buffer.length + responseBytes > MAX_SMTP_RESPONSE_BYTES) {
+        const error = new Error('SMTP response exceeded the safety limit');
+        error.smtpStage = this.stage;
+        throw error;
+      }
+    }
+  }
+
+  async writeBase64Lines(encoded) {
+    // Keep peak memory bounded: at most ~61 KB of wrapped attachment data is
+    // materialized for each socket write instead of another full MIME copy.
+    const linesPerWrite = 800;
+    const charsPerWrite = 76 * linesPerWrite;
+    for (let offset = 0; offset < encoded.length; offset += charsPerWrite) {
+      const chunk = encoded.slice(offset, offset + charsPerWrite);
+      const lines = [];
+      for (let i = 0; i < chunk.length; i += 76) lines.push(chunk.slice(i, i + 76));
+      await this.write(lines.join('\r\n') + '\r\n');
     }
   }
 
   async sendMail({to, subject, text, html, attachment, attachments, inReplyTo, references, messageId}) {
     const recipient = validateEmail(to, 'Recipient');
     const sender = this.config.username;
-    this.expect(await this.command(`MAIL FROM:<${sender}>`), 250, 'MAIL FROM');
-    this.expect(await this.command(`RCPT TO:<${recipient}>`), 250, 'RCPT TO');
-    this.expect(await this.command('DATA'), 354, 'DATA');
-
     const mixed = `squish-mixed-${crypto.randomUUID()}`;
     const alt = `squish-alt-${crypto.randomUUID()}`;
     const display = this.config.from_name ? `${encodedHeader(this.config.from_name)} <${sender}>` : sender;
     const msgId = messageId || `<${crypto.randomUUID()}@squish.app>`;
+    const allAttachments = attachments || (attachment ? [attachment] : []);
+    const encodedText = utf8Base64(text);
+    const encodedHtml = html ? utf8Base64(html) : '';
+    const estimatedSize = allAttachments.reduce((sum, item) => sum + wireBase64Size(item.base64), 0) +
+      wireBase64Size(encodedText) + wireBase64Size(encodedHtml) + 8192;
+    const advertisedSize = Number.parseInt(this.capabilities.get('SIZE') || '', 10);
+    if (Number.isFinite(advertisedSize) && advertisedSize > 0 && estimatedSize > advertisedSize) {
+      const error = new Error(`Encoded message is approximately ${estimatedSize} bytes; relay limit is ${advertisedSize}`);
+      error.smtpStage = 'message_size';
+      error.relayResponse = `SIZE ${advertisedSize}`;
+      throw error;
+    }
+
+    const mailFrom = `MAIL FROM:<${sender}>${this.capabilities.has('SIZE') ? ` SIZE=${estimatedSize}` : ''}`;
+    this.stage = 'envelope';
+    if (this.capabilities.has('PIPELINING')) {
+      await this.write(`${mailFrom}\r\nRCPT TO:<${recipient}>\r\nDATA\r\n`);
+      this.expect(await this.readResponse(), 250, 'MAIL FROM');
+      this.expect(await this.readResponse(), 250, 'RCPT TO');
+      this.expect(await this.readResponse(), 354, 'DATA');
+    } else {
+      this.expect(await this.command(mailFrom), 250, 'MAIL FROM');
+      this.expect(await this.command(`RCPT TO:<${recipient}>`), 250, 'RCPT TO');
+      this.expect(await this.command('DATA'), 354, 'DATA');
+    }
+
     const lines = [
       `From: ${display}`, `To: <${recipient}>`, `Subject: ${encodedHeader(subject)}`,
       `Date: ${new Date().toUTCString()}`, `Message-ID: ${msgId}`,
@@ -392,34 +559,62 @@ class SmtpClient {
       lines.push(
         `Content-Type: multipart/alternative; boundary="${alt}"`, '',
         `--${alt}`, 'Content-Type: text/plain; charset="utf-8"', 'Content-Transfer-Encoding: base64', '',
-        wrapBase64(utf8Base64(text)), '',
+        wrapBase64(encodedText), '',
         `--${alt}`, 'Content-Type: text/html; charset="utf-8"', 'Content-Transfer-Encoding: base64', '',
-        wrapBase64(utf8Base64(html)), '', `--${alt}--`, ''
+        wrapBase64(encodedHtml), '', `--${alt}--`, ''
       );
     } else {
       lines.push('Content-Type: text/plain; charset="utf-8"', 'Content-Transfer-Encoding: base64', '',
-        wrapBase64(utf8Base64(text)), '');
+        wrapBase64(encodedText), '');
     }
-    const allAttachments = attachments || (attachment ? [attachment] : []);
+    this.stage = 'message_upload';
+    await this.write(lines.join('\r\n') + '\r\n');
     for (const item of allAttachments) {
       const filename = cleanFilename(item.filename);
-      lines.push(
+      await this.write([
         `--${mixed}`, `Content-Type: application/pdf; name="${filename}"`,
         `Content-Disposition: attachment; filename="${filename}"`,
-        'Content-Transfer-Encoding: base64', '', wrapBase64(item.base64), ''
-      );
+        'Content-Transfer-Encoding: base64', ''
+      ].join('\r\n') + '\r\n');
+      await this.writeBase64Lines(item.base64);
     }
-    lines.push(`--${mixed}--`, '');
-    const message = lines.join('\r\n').replace(/(^|\r\n)\./g, '$1..') + '\r\n.\r\n';
-    await this.writer.write(this.encoder.encode(message));
+    await this.write(`--${mixed}--\r\n.\r\n`);
+    this.stage = 'message_delivery';
     this.expect(await this.readResponse(), 250, 'Message delivery');
     return msgId;
   }
 
   async close() {
-    try { if (this.writer) await this.command('QUIT'); } catch {}
-    try { this.socket?.close(); } catch {}
+    try { if (this.writer) await this.deadline(this.command('QUIT'), SMTP_CLOSE_TIMEOUT_MS); } catch {}
+    try { if (this.socket) await this.socket.close(); } catch {}
   }
+}
+
+function retryJitterMs(attempt) {
+  const value = new Uint32Array(1);
+  crypto.getRandomValues(value);
+  return Math.min(1500, 150 * (2 ** attempt)) + (value[0] % 151);
+}
+
+async function openSmtpClient(config, policy, maxRetries = 1) {
+  let lastError;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const client = new SmtpClient(config, policy);
+    try {
+      await client.open();
+      client.connectRetries = attempt;
+      return client;
+    } catch (error) {
+      error.smtpStage ||= client.stage;
+      lastError = error;
+      await client.close();
+      const transientCode = [421, 450, 451].includes(error.smtpCode);
+      const transientStage = ['connection', 'greeting'].includes(error.smtpStage);
+      if (attempt >= maxRetries || (!transientCode && !transientStage)) throw error;
+      await new Promise(resolve => setTimeout(resolve, retryJitterMs(attempt)));
+    }
+  }
+  throw lastError;
 }
 
 function validatePdfBase64(value) {
@@ -463,8 +658,8 @@ function passwordMessage(password, docName, template) {
   };
 }
 
-async function dispatch(payload) {
-  const smtp = validateSmtp(payload.smtp);
+async function dispatch(payload, policy = {}) {
+  const smtp = validateSmtp(payload.smtp, policy);
   const recipient = validateEmail(payload.recipient, 'Recipient');
   const password = String(payload.password || '');
   if (password.length < 4) throw new Error('Decryption password must be at least 4 characters');
@@ -474,10 +669,9 @@ async function dispatch(payload) {
   const subject = cleanHeader(payload.subject) || attachmentLabel;
   const keyDeliveryMode = cleanHeader(payload.keyDeliveryMode || payload.key_delivery_mode || 'email').toLowerCase();
   if (!['email', 'oob', 'dual'].includes(keyDeliveryMode)) throw new Error('Invalid key delivery mode');
-  const client = new SmtpClient(smtp);
+  const client = await openSmtpClient(smtp, policy);
   let firstSent = false;
   try {
-    await client.open();
     const email1MessageId = `<${crypto.randomUUID()}@squish.app>`;
     const deliveryText = keyDeliveryMode === 'oob'
       ? 'Its password will be delivered through a separate channel.'
@@ -498,7 +692,8 @@ async function dispatch(payload) {
     });
     firstSent = true;
     if (keyDeliveryMode !== 'oob') {
-      const delayMs = Math.min(10000, Math.max(500, Number(payload.delaySeconds || 2.5) * 1000));
+      const configuredDelay = payload.delaySeconds ?? payload.delay_seconds ?? 0.1;
+      const delayMs = Math.min(10000, Math.max(0, Number(configuredDelay) * 1000));
       await new Promise(resolve => setTimeout(resolve, delayMs));
       const second = passwordMessage(password, attachmentLabel, payload.email2Body);
       const threadEmails = Boolean(payload.threadEmails || payload.thread_emails);
@@ -520,15 +715,20 @@ async function dispatch(payload) {
       attachments: attachments.map(item => item.filename),
       step1_sent: true, step2_sent: keyDeliveryMode !== 'oob',
       key_delivery_mode: keyDeliveryMode,
+      retries: client.connectRetries || 0,
       oob_required: keyDeliveryMode === 'oob' || keyDeliveryMode === 'dual',
       timestamp: new Date().toISOString()
     };
   } catch (error) {
-    if (!firstSent) throw error;
+    if (!firstSent) {
+      error.smtpStage ||= client.stage;
+      throw error;
+    }
+    const diagnostic = smtpDiagnostic(error, client);
     return {
       status: 'partial_failure', recipient, pdf_file: pdfFile,
       attachments: attachments.map(item => item.filename),
-      step1_sent: true, step2_sent: false, error: error.message,
+      step1_sent: true, step2_sent: false, error: diagnostic.error, diagnostic,
       key_delivery_mode: keyDeliveryMode,
       resend: {
         recipient, pdf_filename: pdfFile, subject,
@@ -541,8 +741,8 @@ async function dispatch(payload) {
   }
 }
 
-async function resendKey(payload) {
-  const smtp = validateSmtp(payload.smtp);
+async function resendKey(payload, policy = {}) {
+  const smtp = validateSmtp(payload.smtp, policy);
   const recipient = validateEmail(payload.recipient, 'Recipient');
   const password = String(payload.password || '');
   const pdfFile = cleanFilename(payload.pdf_filename || payload.pdfFilename);
@@ -550,9 +750,8 @@ async function resendKey(payload) {
   const content = passwordMessage(password, pdfFile, payload.email2_body || payload.email2Body);
   const subject = (cleanHeader(payload.email2_subject || payload.email2Subject) || `[Decryption Key] Password for: ${cleanHeader(payload.subject) || pdfFile}`)
     .replace(/\{\{(?:doc_name|filename)\}\}/g, pdfFile);
-  const client = new SmtpClient(smtp);
+  const client = await openSmtpClient(smtp, policy);
   try {
-    await client.open();
     await client.sendMail({to: recipient, subject, text: content.text, html: content.html});
     return {ok: true, recipient, timestamp: new Date().toISOString()};
   } finally {
@@ -624,7 +823,7 @@ export default {
         const body = await readJson(request);
         let client = null;
         try {
-          client = new SmtpClient(body.smtp || body);
+          client = new SmtpClient(body.smtp || body, env);
           await client.open();
           return json({ok: true, message: `Connected and authenticated to ${client.config.server}:${client.config.port}`});
         } catch (error) {
@@ -635,12 +834,20 @@ export default {
       }
       if ((url.pathname === '/api/t/email-secure' || url.pathname === '/api/send-secure-email') && request.method === 'POST') {
         await requireSession(request, env);
-        const receipt = await dispatch(await readJson(request));
-        return json(receipt, receipt.status === 'partial_failure' ? 207 : 200);
+        try {
+          const receipt = await dispatch(await readJson(request), env);
+          return json(receipt, receipt.status === 'partial_failure' ? 207 : 200);
+        } catch (error) {
+          return json(smtpDiagnostic(error, {stage:error?.smtpStage || 'connection'}), 502);
+        }
       }
       if (url.pathname === '/api/smtp/resend-key' && request.method === 'POST') {
         await requireSession(request, env);
-        return json(await resendKey(await readJson(request)));
+        try {
+          return json(await resendKey(await readJson(request), env));
+        } catch (error) {
+          return json(smtpDiagnostic(error, {stage:error?.smtpStage || 'connection'}), 502);
+        }
       }
       if (url.pathname.startsWith('/api/')) return json({error: 'Endpoint not found'}, 404);
       if (env.ASSETS) {

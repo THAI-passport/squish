@@ -292,7 +292,7 @@ window.runStaticSecureEmail = async function(files, formData) {{
     htmlBody: resolvedHtml,
     plainTextOnly: formData.get('email_plain_text_only') === '1',
     password,
-    delaySeconds: Number(formData.get('delay_seconds') || 2.5),
+    delaySeconds: Number(formData.get('delay_seconds') || 0.1),
     email2Subject: String(formData.get('email2_subject') || ''),
     email2Body: String(formData.get('email2_body') || ''),
     threadEmails: formData.get('thread_emails') === '1' || formData.get('thread_emails') === 'true',

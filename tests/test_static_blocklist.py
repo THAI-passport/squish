@@ -45,6 +45,25 @@ def test_smtp_diagnostics_are_wired_in_both_deployment_modes_and_ui():
     assert "textContent = fields.map" in ui  # relay text must not be inserted as HTML
 
 
+def test_cloudflare_smtp_transport_has_bounded_protocol_and_policy_controls():
+    worker = (BACKEND / "static" / "squish-email-worker.js").read_text(encoding="utf-8")
+
+    for marker in (
+        "MAX_REQUEST_BYTES",
+        "SMTP_CONNECT_TIMEOUT_MS",
+        "SMTP_OVERALL_TIMEOUT_MS",
+        "MAX_SMTP_RESPONSE_BYTES",
+        "MAX_SMTP_RESPONSE_LINES",
+        "SMTP_ALLOWED_HOSTS",
+        "SMTP_ALLOWED_PORTS",
+        "PIPELINING",
+        "SIZE",
+        "await this.socket.close()",
+    ):
+        assert marker in worker
+    assert worker.count("await client.open();") == 2  # retry helper + connection-test endpoint only
+
+
 def _unsupported_map() -> dict[str, str]:
     """Extract the literal `unsupported` dict from generate_client_tools.py
     without executing it."""
