@@ -481,7 +481,38 @@ def test_subprocess_limits_avoid_preexec_when_prlimit_exists(monkeypatch):
 def test_subprocess_limits_fall_back_to_preexec_without_prlimit(monkeypatch):
     monkeypatch.setattr(T.shutil, "which", lambda b: None)
     argv, preexec = T._wrap_limits(["gs", "-dBATCH"])
-    assert argv == ["gs", "-dBATCH"] and preexec is T._limits
+    if T.os.name != "posix":
+        assert argv == ["gs", "-dBATCH"] and preexec is None
+    else:
+        assert argv == ["gs", "-dBATCH"] and preexec is T._limits
+
+
+# ---------------------------------------------------- engine discovery ---
+
+def test_find_engine_direct_path(monkeypatch):
+    monkeypatch.setattr(T.shutil, "which", lambda b: f"/fake/bin/{b}" if b == "gs" else None)
+    assert T.find_engine("gs") == "/fake/bin/gs"
+
+
+def test_find_engine_windows_alias(monkeypatch):
+    # Simulate Windows with gswin64c on PATH
+    monkeypatch.setattr(T.os, "name", "nt")
+    monkeypatch.setattr(T.shutil, "which", lambda b: "C:\\tools\\gswin64c.exe" if b == "gswin64c" else None)
+    assert T.find_engine("gs") == "C:\\tools\\gswin64c.exe"
+
+
+def test_find_engine_windows_standard_path(monkeypatch):
+    # Simulate Windows without gs on PATH but installed in Program Files
+    monkeypatch.setattr(T.os, "name", "nt")
+    monkeypatch.setattr(T.shutil, "which", lambda b: None)
+    monkeypatch.setattr(T, "_windows_standard_paths", lambda b: ["C:\\Program Files\\LibreOffice\\program\\soffice.exe"] if b == "soffice" else [])
+    assert T.find_engine("soffice") == "C:\\Program Files\\LibreOffice\\program\\soffice.exe"
+
+
+def test_find_engine_posix_missing_returns_none(monkeypatch):
+    monkeypatch.setattr(T.os, "name", "posix")
+    monkeypatch.setattr(T.shutil, "which", lambda b: None)
+    assert T.find_engine("gs") is None
 
 
 # ------------------------------------------------- merge output naming ---

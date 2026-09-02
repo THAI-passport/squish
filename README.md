@@ -242,36 +242,51 @@ If the files are absent, nothing breaks: rows fall back to a document icon.
 
 ## Running on Windows
 
-**Use Docker Desktop.** It is the recommended path and the only one that gives
-you all 32 tools with no extra setup — every engine is baked into the image,
-and the container is what caps memory:
+**Use `run-local.bat` or `run-local.ps1`:**
+Squish ships with native Windows startup scripts for PowerShell and Command Prompt. Like `run-local.sh`, they auto-detect Docker Desktop if running (or fall back to a native `.venv`), kill any stale server on port 8000, verify the source version, wait for the `/api/health` endpoint, and launch your browser.
 
+In PowerShell:
+```powershell
+.\run-local.ps1
+```
+
+In Command Prompt:
+```cmd
+run-local.bat
+```
+
+Or run Docker directly:
 ```powershell
 docker compose up --build          # http://localhost:8000
 ```
 
-**WSL2** is the next best option: open an Ubuntu shell and follow the normal
+**WSL2** is also available: open an Ubuntu shell and follow the normal
 Linux instructions, including `apt install` for the engines. `run-local.sh`
 runs there unchanged.
 
-**Native Windows Python** works for the pure-PyMuPDF tools (merge, split,
-rotate, watermark, redact, page numbers, and the rest), with two caveats:
+**Native Windows Execution & Engine Auto-Discovery:**
+Native Windows Python runs all core PyMuPDF tools out of the box (merge, split,
+rotate, watermark, redact, page numbers, and more). In addition, Squish automatically
+discovers native Windows engines even if they were installed via standard Windows
+installers and not added to `PATH`:
+- **Ghostscript**: Detects `gswin64c.exe` / `gswin32c.exe` or `gs.exe` in `PATH` and `C:\Program Files\gs\gs*\bin`.
+- **LibreOffice**: Detects `soffice.exe` / `soffice.com` in `PATH` and `C:\Program Files\LibreOffice\program`.
+- **Tesseract OCR**: Detects `tesseract.exe` in `PATH` and `C:\Program Files\Tesseract-OCR`.
+- **qpdf**: Detects `qpdf.exe` in `PATH` and `C:\Program Files\qpdf\bin`.
+- **ocrmypdf**: Detects `ocrmypdf.exe` in `PATH` and python `.venv\Scripts`.
 
-- `run-local.sh` is a bash script and will not run in `cmd`/PowerShell. Start
-  the server directly:
+To start manually without the runner script:
+```powershell
+py -m venv .venv
+.venv\Scripts\pip install -r backend\requirements.txt
+cd backend
+..\.venv\Scripts\uvicorn app:app --host 127.0.0.1 --port 8000
+```
 
-  ```powershell
-  py -m venv .venv
-  .venv\Scripts\pip install -r backend\requirements.txt
-  cd backend
-  ..\.venv\Scripts\uvicorn app:app --host 127.0.0.1 --port 8000
-  ```
-
-- The per-subprocess memory ceiling (`RLIMIT_AS` / `prlimit`) does not exist on
-  Windows, so the engine tools run without it. This is the main reason Docker
-  is preferred — a malformed PDF handed to Ghostscript can spike memory with
-  nothing to cap it. The engine binaries themselves (Ghostscript, qpdf,
-  LibreOffice) have Windows installers if you want those tools natively.
+> Note: The POSIX per-subprocess memory ceiling (`RLIMIT_AS` / `prlimit`) does not exist on
+> Windows, so native Windows engine child processes run without in-process RLIMITs.
+> Docker Desktop remains recommended in hostile multi-tenant environments because the
+> container itself limits memory.
 
 ## Build variants
 

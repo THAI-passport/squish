@@ -17,11 +17,14 @@ Heavy lifting is delegated to battle-tested engines rather than reimplemented:
 
 from __future__ import annotations
 
+import glob
 import logging
 import os
 import re
 import shutil
 import subprocess
+import sys
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,6 +65,94 @@ class Result:
 
 # ---------------------------------------------------------------- helpers ---
 
+# Known alternative binary names on Windows
+_WINDOWS_ENGINE_ALIASES: dict[str, list[str]] = {
+    "gs": ["gswin64c", "gswin32c", "gs"],
+    "soffice": ["soffice"],
+    "tesseract": ["tesseract"],
+    "ocrmypdf": ["ocrmypdf"],
+    "qpdf": ["qpdf"],
+    "exiftool": ["exiftool", "exiftool(-k)"],
+}
+
+
+def _windows_standard_paths(name: str) -> list[str]:
+    """Known installation locations on Windows when binaries are not in PATH."""
+    program_files = [
+        os.environ.get("ProgramFiles", r"C:\Program Files"),
+        os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+    ]
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    candidates: list[str] = []
+
+    if name == "gs":
+        for pf in program_files:
+            candidates.extend(glob.glob(os.path.join(pf, "gs", "gs*", "bin", "gswin64c.exe")))
+            candidates.extend(glob.glob(os.path.join(pf, "gs", "gs*", "bin", "gswin32c.exe")))
+            candidates.extend(glob.glob(os.path.join(pf, "gs", "gs*", "bin", "gs.exe")))
+    elif name == "soffice":
+        for pf in program_files:
+            candidates.append(os.path.join(pf, "LibreOffice", "program", "soffice.exe"))
+            candidates.append(os.path.join(pf, "LibreOffice", "program", "soffice.com"))
+    elif name == "tesseract":
+        for pf in program_files:
+            candidates.append(os.path.join(pf, "Tesseract-OCR", "tesseract.exe"))
+        if local_app_data:
+            candidates.append(os.path.join(local_app_data, "Programs", "Tesseract-OCR", "tesseract.exe"))
+    elif name == "qpdf":
+        for pf in program_files:
+            candidates.append(os.path.join(pf, "qpdf", "bin", "qpdf.exe"))
+    elif name == "ocrmypdf":
+        # Check python environment Scripts directory
+        candidates.append(os.path.join(sys.prefix, "Scripts", "ocrmypdf.exe"))
+    elif name == "exiftool":
+        for pf in program_files:
+            candidates.append(os.path.join(pf, "exiftool", "exiftool.exe"))
+
+    return [c for c in candidates if os.path.isfile(c)]
+
+
+def find_engine(name: str, which: Callable[[str], str | None] | None = None) -> str | None:
+    """Find the path to an engine binary, with Windows alias and path discovery.
+
+    On Linux and macOS this delegates to `shutil.which(name)`. On Windows,
+    Ghostscript is typically `gswin64c.exe`, LibreOffice lives in
+    `C:\\Program Files\\LibreOffice\\program\\soffice.exe` without being added
+    to PATH by default, and other tools have standard Windows locations.
+    """
+    _which = which or shutil.which
+
+    # 1. Direct which lookup on PATH
+    found = _which(name)
+    if found:
+        return found
+
+    # If not on Windows, nothing more to check
+    if os.name != "nt":
+        return None
+
+    # Map alias to canonical engine name if needed
+    canonical = name
+    for eng, aliases in _WINDOWS_ENGINE_ALIASES.items():
+        if name in aliases or name == eng:
+            canonical = eng
+            break
+
+    # 2. Check Windows aliases on PATH
+    aliases = _WINDOWS_ENGINE_ALIASES.get(canonical, [])
+    for alias in aliases:
+        found = _which(alias)
+        if found:
+            return found
+
+    # 3. Check known standard installation directories on Windows
+    std_paths = _windows_standard_paths(canonical)
+    if std_paths:
+        return std_paths[0]
+
+    return None
+
+
 def run(cmd: list[str], cwd: Path | None = None, timeout: int = 300,
         ok_codes: tuple[int, ...] = (0,)) -> None:
     """Run a subprocess from an exec array (never a shell string).
@@ -73,13 +164,23 @@ def run(cmd: list[str], cwd: Path | None = None, timeout: int = 300,
     damaged file. Treating that as failure would make the repair tool reject
     exactly the documents it is meant to fix.
     """
+    binary = cmd[0]
+    resolved = find_engine(binary)
+    if resolved:
+        cmd = [resolved] + cmd[1:]
+
     env = dict(os.environ)
     # LibreOffice and Ghostscript both need a writable HOME. Under a read-only
     # root filesystem on Kubernetes only /tmp is writable, so point HOME there.
-    env.setdefault("HOME", str(cwd or Path("/tmp")))
-    # Keep the real binary name for messages: the exec array may be wrapped in
-    # prlimit, and "prlimit failed" tells the user nothing.
-    binary = cmd[0]
+    # On Windows, /tmp does not exist, so use tempfile.gettempdir() and ensure
+    # USERPROFILE, TEMP, and TMP are also populated.
+    default_home = str(cwd or tempfile.gettempdir())
+    env.setdefault("HOME", default_home)
+    if os.name == "nt":
+        env.setdefault("USERPROFILE", default_home)
+        env.setdefault("TEMP", tempfile.gettempdir())
+        env.setdefault("TMP", tempfile.gettempdir())
+
     argv, preexec = _wrap_limits(cmd)
     log.info("exec: %s", " ".join(cmd[:4]) + (" ..." if len(cmd) > 4 else ""))
     try:
@@ -636,7 +737,7 @@ def office_to_pdf(work: Path, inputs: list[Path], p: dict) -> Result:
             raise ToolError(f"{f.name}: unsupported type {f.suffix}")
         run([
             "soffice", "--headless", "--norestore", "--nolockcheck",
-            f"-env:UserInstallation=file://{profile}",
+            f"-env:UserInstallation={profile.as_uri()}",
             "--convert-to", "pdf", "--outdir", str(work), str(f),
         ], cwd=work, timeout=600)
         produced = work / (f.stem + ".pdf")

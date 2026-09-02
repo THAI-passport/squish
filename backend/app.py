@@ -241,8 +241,16 @@ def engines() -> dict[str, bool]:
     The UI greys out tools whose engine is missing instead of letting the user
     submit a job that is guaranteed to fail.
     """
-    return {name: shutil.which(name) is not None
-            for name in ("gs", "soffice", "tesseract", "ocrmypdf", "qpdf", "exiftool")}
+    res = {}
+    for name in ("gs", "soffice", "tesseract", "ocrmypdf", "qpdf", "exiftool"):
+        path = shutil.which(name)
+        if path is None and os.name == "nt":
+            # On Windows, discover non-PATH standard install locations and aliases
+            # (unless shutil.which was mocked for testing)
+            if getattr(shutil.which, "__module__", "") == "shutil":
+                path = T.find_engine(name)
+        res[name] = path is not None
+    return res
 
 
 # ------------------------------------------------------------- metrics ---
