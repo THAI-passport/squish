@@ -17,6 +17,12 @@ services:
       MAX_CONCURRENCY: "4"
       JOB_TIMEOUT: "900"
       # API_KEY: "change-me"   # require X-API-Key / ?key= on /api
+      # Leave this unset/commented and Squish mints one on first boot,
+      # saving it to backend/.env INSIDE the container -- fine for
+      # `docker restart`, but a fresh key every time since /app isn't a
+      # named volume here. Set your own above to survive `docker compose
+      # up --build`/recreate, or mount backend/.env to persist the
+      # auto-generated one across recreates too.
     tmpfs:
       # Scratch space lives in RAM and vanishes with the container. Cap it so a
       # runaway conversion cannot eat the host's memory.

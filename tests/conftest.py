@@ -8,12 +8,22 @@ readable Python.
 
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+
+# app.py now auto-provisions an API_KEY into env_manager's .env file on
+# first import if one isn't already set (see app.py's SMTP_GUARD_KEY
+# bootstrap) -- so that "import app" below doesn't write into the real
+# backend/.env sitting next to the source, point env_manager at a
+# throwaway file for the whole test session. Must happen before anything
+# imports app or env_manager.
+os.environ.setdefault("SMTP_ENV_PATH", str(Path(tempfile.mkdtemp()) / ".env"))
 
 import fitz  # noqa: E402
 

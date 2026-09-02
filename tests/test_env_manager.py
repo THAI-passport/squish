@@ -100,3 +100,42 @@ def test_out_of_range_profile_keys_are_ignored(tmp_path, monkeypatch):
         "server": "smtp.example.com", "port": 587,
         "username": "user@example.com", "password": "secret",
     }) == 1
+
+
+# --------------------------------------------------- local API_KEY boot ---
+
+def test_get_or_create_local_api_key_mints_and_persists(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    monkeypatch.setattr(env_manager, "ENV_PATH", env_path)
+    assert not env_path.exists()
+
+    key = env_manager.get_or_create_local_api_key()
+    assert len(key) >= 20  # secrets.token_urlsafe(24), not a placeholder
+    assert env_path.exists()
+    assert f'API_KEY="{key}"' in env_path.read_text(encoding="utf-8")
+
+
+def test_get_or_create_local_api_key_is_stable_across_calls(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    monkeypatch.setattr(env_manager, "ENV_PATH", env_path)
+    first = env_manager.get_or_create_local_api_key()
+    second = env_manager.get_or_create_local_api_key()
+    assert first == second  # second call reuses the persisted key
+
+
+def test_get_or_create_local_api_key_reuses_an_operator_supplied_line(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text('API_KEY="hand-picked-value"\n', encoding="utf-8")
+    monkeypatch.setattr(env_manager, "ENV_PATH", env_path)
+    assert env_manager.get_or_create_local_api_key() == "hand-picked-value"
+
+
+def test_get_or_create_local_api_key_preserves_smtp_profiles(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    monkeypatch.setattr(env_manager, "ENV_PATH", env_path)
+    env_manager.add_profile({
+        "server": "smtp.example.com", "port": 587,
+        "username": "user@example.com", "password": "secret",
+    })
+    env_manager.get_or_create_local_api_key()
+    assert env_manager.list_profiles_masked()[0]["server"] == "smtp.example.com"

@@ -180,16 +180,38 @@ def test_same_origin_state_change_reaches_handler(client):
 
 
 def test_sensitive_smtp_routes_require_configured_api_key(client, monkeypatch):
+    # Simulates the rare case where even the auto-provisioned local key is
+    # unavailable (e.g. env_manager couldn't persist one) -- SMTP endpoints
+    # must still refuse outright rather than silently running unauthenticated.
+    # SMTP_GUARD_KEY, not API_KEY, is what actually gates these routes; see
+    # app.py's bootstrap comment for why the two are tracked separately.
     monkeypatch.setattr(A, "API_KEY", None)
+    monkeypatch.setattr(A, "SMTP_GUARD_KEY", None)
     assert client.post("/api/smtp/test", json={}).status_code == 403
     assert client.post("/api/smtp/resend-key", json={}).status_code == 403
     assert client.post("/api/t/email-secure").status_code == 403
+
+
+def test_smtp_routes_use_auto_provisioned_key_when_api_key_is_unset(client, monkeypatch):
+    # The normal local-run case: no operator-set API_KEY, so app.py already
+    # minted SMTP_GUARD_KEY at import time. The general API and /metrics
+    # stay open (API_KEY is still None), but SMTP endpoints require it.
+    monkeypatch.setattr(A, "API_KEY", None)
+    monkeypatch.setattr(A, "SMTP_GUARD_KEY", "auto-generated-key")
+    assert client.get("/api/tools").status_code == 200  # general API: open
+    assert client.get("/metrics").status_code == 200    # metrics: open
+    r = client.post("/api/smtp/test", json={})
+    assert r.status_code == 401  # SMTP route: gated, no key on the request
+    r = client.post("/api/smtp/test", json={},
+                     headers={"X-API-Key": "auto-generated-key"})
+    assert r.status_code not in (401, 403)
 
 
 def test_smtp_test_returns_structured_safe_diagnostic(client, monkeypatch):
     import smtp_manager
 
     monkeypatch.setattr(A, "API_KEY", "test-api-key")
+    monkeypatch.setattr(A, "SMTP_GUARD_KEY", "test-api-key")
     monkeypatch.setattr(smtp_manager, "test_smtp_connection", lambda _config: {
         "ok": False,
         "stage": "authentication",

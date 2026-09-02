@@ -56,7 +56,13 @@ WORKDIR /app
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY backend/app.py backend/tools.py ./
+# env_manager.py / smtp_manager.py power the server-side SMTP profile and
+# secure-email endpoints (imported lazily from app.py, and now also at
+# startup to auto-provision a local API_KEY -- see app.py). Leaving either
+# out of the image doesn't fail the build, it fails at request/startup time
+# with an ImportError, so keep this list in sync with app.py's `import
+# env_manager` / `import smtp_manager` call sites.
+COPY backend/app.py backend/tools.py backend/env_manager.py backend/smtp_manager.py ./
 COPY backend/static ./static
 
 # Vendor pdf.js at build time so the shipped image renders thumbnails with no

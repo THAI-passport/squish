@@ -298,7 +298,7 @@ conversion, OCR and PDF/A.
 | `SUBPROC_CPU_SEC` | 600 | `RLIMIT_CPU` on engine children; 0 disables |
 | `SCRATCH_DIR` | `/tmp` | an emptyDir on Kubernetes |
 | `LO_PROFILE_TEMPLATE` | `/opt/lo-profile` | warm LibreOffice profile baked at build |
-| `API_KEY` | unset | protects `/api/*` and `/metrics` through `X-API-Key`; secure email and server-side SMTP stay disabled until it is set |
+| `API_KEY` | auto-generated on first boot | protects `/api/*` and `/metrics` through `X-API-Key`. If unset, Squish mints one on first boot and saves it into `backend/.env` (same file the SMTP profiles below use), so a bare local run is never permanently stuck without one -- set this yourself to pin a specific value instead |
 | `SQUISH_ALLOW_PLAINTEXT_SMTP` | 0 | set to `1` only for an explicitly trusted network to permit SMTP without TLS |
 | `SMTP_ALLOWED_HOSTS` | unset | optional comma-separated exact host allowlist for SMTP relays; recommended for fixed production deployments |
 | `SMTP_ALLOWED_PORTS` | unset | optional comma-separated SMTP port allowlist, for example `465,587` |

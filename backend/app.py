@@ -71,6 +71,39 @@ JOB_TIMEOUT = int(os.environ.get("JOB_TIMEOUT", "900"))
 # /tmp is a tmpfs -- writing 8 GB there is writing 8 GB of RAM.
 MAX_OUTPUT_MB = int(os.environ.get("MAX_OUTPUT_MB", "1024"))
 API_KEY = os.environ.get("API_KEY") or None
+# Governs the SMTP-sensitive endpoints specifically (see
+# `_sensitive_smtp_path` / `_require_api_key` below), independent of
+# whether the operator has gated the rest of /api and /metrics with
+# API_KEY. When API_KEY is set, it and SMTP_GUARD_KEY are the same value --
+# nothing changes there. When it is NOT set, the general API and /metrics
+# stay open exactly as documented, but the SMTP/secure-email surface still
+# needs a key, so one is auto-provisioned rather than left to a manual
+# invent-a-key / export / restart dance (see
+# env_manager.get_or_create_local_api_key for exactly how it's
+# found-or-minted, persisted, and why this never applies to the separate
+# Cloudflare Workers deployment).
+SMTP_GUARD_KEY = API_KEY
+if SMTP_GUARD_KEY is None:
+    try:
+        import env_manager
+        SMTP_GUARD_KEY = env_manager.get_or_create_local_api_key()
+        log.warning(
+            "API_KEY was not set -- generated one for secure email / "
+            "server-side SMTP and saved it to %s, no restart needed. The "
+            "rest of the API and /metrics remain open, as documented. "
+            "Paste this value into the SMTP Credential Vault's API key "
+            "field in the UI (or read it straight from that file). Set "
+            "your own API_KEY environment variable instead to pin a "
+            "specific value and gate the whole API with it too.",
+            env_manager.ENV_PATH,
+        )
+    except Exception as exc:
+        log.warning(
+            "Could not auto-generate a local API_KEY (%s) -- secure email "
+            "and SMTP endpoints will stay disabled until API_KEY is set by "
+            "hand (environment variable, or an API_KEY= line in %s).",
+            exc, Path(__file__).parent / ".env",
+        )
 # Under a read-only root filesystem this must point at a writable emptyDir.
 SCRATCH = os.environ.get("SCRATCH_DIR", tempfile.gettempdir())
 
@@ -109,10 +142,17 @@ def _sensitive_smtp_path(path: str) -> bool:
     )
 
 
-def _valid_api_key(request: Request) -> bool:
-    """Check only the header form so credentials never land in URLs/logs."""
+def _valid_api_key(request: Request, key: str | None = None) -> bool:
+    """Check only the header form so credentials never land in URLs/logs.
+
+    `key` defaults to (a freshly read) API_KEY; callers gating the
+    SMTP-only surface pass SMTP_GUARD_KEY explicitly instead (see `guard`
+    and `_require_api_key`). Read module globals at call time, not via a
+    bound default, so tests that monkeypatch API_KEY still take effect.
+    """
+    expected = API_KEY if key is None else key
     given = request.headers.get("x-api-key") or ""
-    return bool(API_KEY) and hmac.compare_digest(given, API_KEY)
+    return bool(expected) and hmac.compare_digest(given, expected)
 
 
 @app.middleware("http")
@@ -126,13 +166,19 @@ async def guard(request: Request, call_next):
     if API_KEY and guarded:
         if not _valid_api_key(request):
             return JSONResponse({"detail": "invalid or missing API key"}, 401)
-    if _sensitive_smtp_path(path) and not API_KEY:
-        return JSONResponse({
-            "detail": (
-                "Secure email and SMTP endpoints require API_KEY to be configured "
-                "on this server."
-            )
-        }, 403)
+    if _sensitive_smtp_path(path):
+        if not SMTP_GUARD_KEY:
+            return JSONResponse({
+                "detail": (
+                    "Secure email and SMTP endpoints require API_KEY to be configured "
+                    "on this server."
+                )
+            }, 403)
+        # When API_KEY is set, the block above already validated this
+        # request against it (SMTP_GUARD_KEY == API_KEY in that case) --
+        # only check separately when the general API was left open.
+        if not API_KEY and not _valid_api_key(request, SMTP_GUARD_KEY):
+            return JSONResponse({"detail": "invalid or missing API key"}, 401)
     # Reject an oversized body BEFORE Starlette parses the multipart. Once
     # request.form() runs, the whole body has already been received and spooled
     # -- and the spool lands in /tmp, which is a tmpfs in both deployments, so
@@ -364,18 +410,22 @@ async def smtp_resend_key(request: Request):
 
 
 def _require_api_key(request: Request) -> None:
-    """The blanket `guard` middleware only enforces API_KEY when one is set.
-    These handlers persist SMTP credentials to disk, so they refuse to run
-    at all unless an API_KEY is configured -- an unauthenticated Squish
-    instance must not expose a remote write-secrets-to-disk endpoint."""
-    if not API_KEY:
+    """The blanket `guard` middleware only enforces API_KEY on the general
+    API when one is set. These handlers persist SMTP credentials to disk,
+    so they refuse to run at all unless SMTP_GUARD_KEY is configured --
+    an unauthenticated Squish instance must not expose a remote
+    write-secrets-to-disk endpoint. SMTP_GUARD_KEY is API_KEY when an
+    operator set one, otherwise the key auto-provisioned at startup (see
+    the SMTP_GUARD_KEY bootstrap near the top of this file) -- so this
+    only fires the 403 below if that provisioning itself failed."""
+    if not SMTP_GUARD_KEY:
         raise HTTPException(
             403,
             "Secure email and server-side SMTP operations require API_KEY to be set. "
-            "Set the API_KEY environment variable and restart, or use the "
-            "browser-side Vault instead."
+            "Set the API_KEY environment variable and restart, or add an "
+            "API_KEY= line to backend/.env, or use the browser-side Vault instead."
         )
-    if not _valid_api_key(request):
+    if not _valid_api_key(request, SMTP_GUARD_KEY):
         raise HTTPException(401, "invalid or missing API key")
 
 

@@ -1226,37 +1226,33 @@ footer code { font-family:var(--font-mono); }
       <div id="vaultServerPane" hidden style="display:flex; flex-direction:column; gap:16px;">
         <div class="vault-add-box">
           <h4 style="margin:0 0 4px;">Server API Key</h4>
-          <p class="hint" style="margin:0 0 10px;">Server-side profiles live in this server's <code>.env</code> file, which only opens up once <code>API_KEY</code> is set as an environment variable <em>on the server itself</em> — this page has no way to set that for you, since it's not something a browser can reach into. Three steps: pick a key, put it in the server's environment and restart it, then enter that same value here for this page session.</p>
+          <p class="hint" style="margin:0 0 10px;">Server-side profiles live in this server's <code>.env</code> file, which only opens up with an <code>API_KEY</code> — but you almost certainly don't need to invent one: if you haven't set <code>API_KEY</code> yourself, Squish already generated one the first time it started and saved it into <code>backend/.env</code> (it also printed it to the server's startup log). Open that file, copy the <code>API_KEY="…"</code> value, and paste it below — no restart needed, this page just has no way to read that file for you.</p>
 
           <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
             <span style="font-size:11px; font-weight:700; color:var(--color-accent-solid); background:var(--color-panel); border:1px solid var(--color-rule); border-radius:999px; padding:2px 8px;">Step 1</span>
-            <span style="font-size:12.5px; color:var(--color-ink-muted);">Get a key — generate one here, or reuse one you've already set.</span>
+            <span style="font-size:12.5px; color:var(--color-ink-muted);">Paste the key from <code>backend/.env</code> or the startup log — or click Generate if you'd rather pick your own.</span>
           </div>
           <div class="vaf-field">
             <label for="vaultApiKeyInput">X-API-Key</label>
             <div style="display:flex; gap:6px;">
-              <input type="text" id="vaultApiKeyInput" placeholder="Click Generate, or paste an existing key" autocomplete="off" style="flex:1;">
+              <input type="text" id="vaultApiKeyInput" placeholder="Paste the key from backend/.env, or click Generate" autocomplete="off" style="flex:1;">
               <button type="button" class="vpc-btn" onclick="generateApiKeyIntoInput()" title="Generate a random key">Generate</button>
               <button type="button" class="vpc-btn" onclick="copyApiKeyInput()" title="Copy">Copy</button>
             </div>
           </div>
 
+          <div style="display:flex; align-items:center; gap:8px; margin:10px 0;">
+            <span style="font-size:11px; font-weight:700; color:var(--color-accent-solid); background:var(--color-panel); border:1px solid var(--color-rule); border-radius:999px; padding:2px 8px;">Step 2</span>
+            <span style="font-size:12.5px; color:var(--color-ink-muted);">Click Use Key. That's it for the auto-generated key — nothing to restart.</span>
+          </div>
+
           <div id="vaultApiKeySetupHelp" hidden style="margin-top:10px; padding:10px 12px; background:var(--color-panel); border:1px solid var(--color-rule); border-radius:8px; font-size:12.5px; line-height:1.5;">
-            <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">
-              <span style="font-size:11px; font-weight:700; color:var(--color-accent-solid); background:var(--color-paper); border:1px solid var(--color-rule); border-radius:999px; padding:2px 8px;">Step 2</span>
-              <b>Put this value in the server's environment, then restart it</b>
-            </div>
-            <p style="margin:4px 0;">Pick whichever matches how you run Squish:</p>
+            <p style="margin:0 0 6px;"><b>Still failing?</b> The value above doesn't match what the server is actually using. That means one of:</p>
             <ul style="margin:4px 0 8px 18px; padding:0;">
-              <li><code>docker-compose.yml</code>: uncomment the <code>API_KEY:</code> line under <code>environment</code> and paste the value in.</li>
-              <li>Running locally: <code>export API_KEY=&lt;that value&gt;</code> before starting the server (or add it to your <code>.env</code>).</li>
+              <li>You copied the wrong line, or an older key from before the server last restarted — re-open <code>backend/.env</code> and copy <code>API_KEY="…"</code> fresh.</li>
+              <li>You typed a <em>new</em> value here instead of pasting the server's — Squish can't adopt a key you invent from this page; it only trusts what the server itself is holding.</li>
             </ul>
-            <p style="margin:4px 0;">Then restart the server so it picks up the new value.</p>
-            <div style="display:flex; align-items:center; gap:8px; margin:10px 0 4px;">
-              <span style="font-size:11px; font-weight:700; color:var(--color-accent-solid); background:var(--color-paper); border:1px solid var(--color-rule); border-radius:999px; padding:2px 8px;">Step 3</span>
-              <b>Come back here and click Save Key</b>
-            </div>
-            <p style="margin:4px 0 0;">Until the server has actually been restarted with this value, Save Key will fail with 401/403 — that's expected, it just means step 2 isn't done yet.</p>
+            <p style="margin:4px 0 0;">To pin your own value instead of the auto-generated one: put it in the server's environment (<code>export API_KEY=&lt;value&gt;</code> before starting locally, or the <code>API_KEY:</code> line in <code>docker-compose.yml</code>) or as a plain <code>API_KEY=</code> line in <code>backend/.env</code>, then restart the server and enter that same value here.</p>
           </div>
 
           <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:10px;">
@@ -4204,8 +4200,8 @@ function generateApiKeyIntoInput(){
   document.getElementById('vaultApiKeySetupHelp').hidden = false;
   const status = document.getElementById('vaultApiKeyStatus');
   status.style.color = 'var(--color-ink-muted)';
-  status.textContent = 'Generated — this is only a suggested value until you actually set it as API_KEY on the server (step 2 below) and restart.';
-  toast('Key generated — see the steps below', 'ok');
+  status.textContent = 'Generated — this is only a suggested value. If you already have an auto-generated key in backend/.env, paste that instead; this one only takes effect once you set it as API_KEY on the server yourself and restart (see "Still failing?" below).';
+  toast('Key generated — pin it on the server, or use the one already in backend/.env', 'ok');
 }
 
 async function copyApiKeyInput(){
