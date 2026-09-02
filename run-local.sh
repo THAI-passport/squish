@@ -14,7 +14,7 @@ MODE="${MODE:-auto}"      # auto | docker | native
 
 echo "== 1/4 verify source =="
 grep -q 'APP_VERSION' backend/app.py || { echo "FAIL: backend/app.py has no APP_VERSION"; exit 1; }
-VERSION=$(grep -o "\"[^\"]*${MARKER}[^\"]*\"" backend/app.py | head -1 | tr -d '"')
+VERSION=$(grep -o "\"[^\"]*${MARKER}[^\"]*\"" backend/app.py | head -1 | tr -d '"\r')
 [ -n "$VERSION" ] || { echo "FAIL: APP_VERSION must contain '${MARKER}'"; exit 1; }
 echo "source version: $VERSION"
 
@@ -27,9 +27,15 @@ if [ "$MODE" = docker ]; then
   docker compose down --remove-orphans 2>/dev/null || true
 else
   PIDS=$(lsof -ti ":$PORT" 2>/dev/null || true)
-  if [ -n "$PIDS" ]; then echo "$PIDS" | xargs kill 2>/dev/null || true; sleep 1; fi
-  PIDS=$(lsof -ti ":$PORT" 2>/dev/null || true)
-  if [ -n "$PIDS" ]; then echo "$PIDS" | xargs kill -9 2>/dev/null || true; sleep 1; fi
+  if [ -z "$PIDS" ] && command -v netstat >/dev/null 2>&1; then
+    PIDS=$(netstat -ano 2>/dev/null | grep ":$PORT " | grep -i "listening" | awk '{print $NF}' | sort -u || true)
+  fi
+  if [ -n "$PIDS" ]; then
+    for pid in $PIDS; do
+      kill "$pid" 2>/dev/null || taskkill //F //PID "$pid" 2>/dev/null || true
+    done
+    sleep 1
+  fi
 fi
 echo "mode: $MODE"
 
@@ -37,24 +43,53 @@ echo "== 3/4 start =="
 if [ "$MODE" = docker ]; then
   docker compose up -d --build
 else
-  command -v python3 >/dev/null || { echo "FAIL: python3 missing"; exit 1; }
+  PY=""
+  if command -v python3 >/dev/null 2>&1; then PY="python3"
+  elif command -v python >/dev/null 2>&1; then PY="python"
+  elif command -v py >/dev/null 2>&1; then PY="py -3"
+  else echo "FAIL: python3 or python missing"; exit 1; fi
+
   # Native mode uses whatever engines are on your PATH. Missing ones are not
   # fatal: /api/tools reports them and the UI greys those tools out.
   missing=""
   for bin in gs qpdf soffice ocrmypdf exiftool; do
-    command -v "$bin" >/dev/null || { echo "note: $bin not found -- related tools disabled"; missing=1; }
+    found=""
+    if command -v "$bin" >/dev/null 2>&1; then
+      found=1
+    elif [ "$bin" = "gs" ] && command -v gswin64c >/dev/null 2>&1; then
+      found=1
+    elif [ "$bin" = "soffice" ] && { [ -f "/c/Program Files/LibreOffice/program/soffice.exe" ] || [ -f "C:/Program Files/LibreOffice/program/soffice.exe" ] || [ -f "/cygdrive/c/Program Files/LibreOffice/program/soffice.exe" ]; }; then
+      found=1
+    elif [ "$bin" = "gs" ] && { ls /c/Program\ Files/gs/gs*/bin/gswin64c.exe >/dev/null 2>&1 || ls /cygdrive/c/Program\ Files/gs/gs*/bin/gswin64c.exe >/dev/null 2>&1; }; then
+      found=1
+    fi
+    if [ -z "$found" ]; then
+      echo "note: $bin not found -- related tools disabled"
+      missing=1
+    fi
   done
-  [ -n "$missing" ] && echo "  to enable them, see the Engines section in README.md (or just use docker)"
+  [ -n "$missing" ] && echo "  to enable them, see the Running on Windows section in README.md (or just use docker)"
   # Best-effort vendor of pdf.js for in-browser thumbnails. Non-fatal: without
   # it the UI just shows document icons instead of page previews.
   if [ ! -f backend/static/vendor/pdf.min.js ]; then
-    ( cd backend/static/vendor && ./fetch-pdfjs.sh ) \
+    ( cd backend/static/vendor && bash ./fetch-pdfjs.sh ) \
       || echo "note: pdf.js not vendored -- thumbnails will fall back to icons"
   fi
-  [ -d .venv ] || python3 -m venv .venv
-  ./.venv/bin/pip install -q --upgrade pip
-  ./.venv/bin/pip install -q -r backend/requirements.txt
-  ( cd backend && nohup ../.venv/bin/uvicorn app:app \
+  [ -d .venv ] || $PY -m venv .venv
+  if [ -d .venv/Scripts ]; then
+    VENV_BIN=".venv/Scripts"
+  else
+    VENV_BIN=".venv/bin"
+  fi
+  if [ -f "$VENV_BIN/python.exe" ]; then
+    VENV_PY="$VENV_BIN/python.exe"
+  else
+    VENV_PY="$VENV_BIN/python"
+  fi
+
+  "$VENV_PY" -m pip install -q --upgrade pip
+  "$VENV_PY" -m pip install -q -r backend/requirements.txt
+  ( cd backend && nohup "../$VENV_BIN/python" -m uvicorn app:app \
       --host 127.0.0.1 --port "$PORT" --timeout-keep-alive 120 \
       > ../squish.log 2>&1 & )
   echo "logs: $(pwd)/squish.log"
@@ -71,9 +106,17 @@ if [ -z "$ok" ]; then
   if [ "$MODE" = native ]; then tail -30 squish.log; else docker compose logs --tail 40; fi
   exit 1
 fi
-curl -s "http://localhost:$PORT/api/health"; echo
-curl -s "http://localhost:$PORT/api/health" | grep -q -e "$MARKER" || {
+curl -s "http://localhost:$PORT/api/health" | tr -d '\r'; echo
+curl -s "http://localhost:$PORT/api/health" | tr -d '\r' | grep -q -e "$MARKER" || {
   echo "VERDICT: OLD SERVER still answering on :$PORT"; exit 1; }
 echo "VERDICT: NEW CODE RUNNING ($VERSION)"
-if command -v open >/dev/null; then open "http://localhost:$PORT"; fi
+if command -v open >/dev/null 2>&1; then
+  open "http://localhost:$PORT"
+elif command -v xdg-open >/dev/null 2>&1; then
+  xdg-open "http://localhost:$PORT" >/dev/null 2>&1 &
+elif command -v cmd.exe >/dev/null 2>&1; then
+  cmd.exe /c start "http://localhost:$PORT" >/dev/null 2>&1 || true
+elif command -v start >/dev/null 2>&1; then
+  start "http://localhost:$PORT" >/dev/null 2>&1 || true
+fi
 echo "Open http://localhost:$PORT"
